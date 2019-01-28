@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"os"
 	"path"
 	"strings"
@@ -42,13 +43,19 @@ type Transaction struct {
 	WtxId [32]byte
 	Version uint32
 	Witness bool
+	Size int
+	BaseSize int
+	VirtualSize int
+	Weight int
+	Amount uint64
+	Fee uint64
 	Inputs []TxInput
 	Outputs []TxOutput
 	WitnessItems []WitnessItem
 	Locktime uint32
 
-	TxIdString string
-	WtxIdString string
+	//TxIdString string
+	//WtxIdString string
 
 }
 
@@ -133,7 +140,6 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() {
 				fmt.Println("Data mismatch")
 				break
 			}
-			blockCount++
 			nextBlockPosition += int64(block.Size)+8
 			_, err = file.Seek(nextBlockPosition,0)
 
@@ -154,6 +160,8 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() {
 		}
 		fmt.Printf("Done: %d of %d bytes, %d blocks \n", nextBlockPosition, fileInfo.Size(), blockCount )
 		fmt.Println("---")
+
+		blockCount++
 
 		file.Close()
 	}
@@ -272,6 +280,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		wtxidData := make([]byte,0)
 		// Version
 		txSize := 0
+		txBaseSize := 0
 		skipped, err = file.Read(buffer4 )
 		if err != nil || skipped != 4 {
 			fmt.Println("Read version")
@@ -280,6 +289,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed += skipped
 		POSITION_IN_FILE +=skipped
 		txSize += skipped
+		txBaseSize += skipped
 
 		transactions[t].Version = binary.LittleEndian.Uint32(buffer4)
 
@@ -294,6 +304,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed += skipped
 		POSITION_IN_FILE +=skipped
 		txSize += skipped
+		txBaseSize += skipped
 
 		txidData = append( txidData, buffer1... )
 		wtxidData = append( wtxidData, buffer1... )
@@ -311,6 +322,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			POSITION_IN_FILE +=skipped
 			txSize += skipped
+			txBaseSize += skipped
 
 			b = buffer2[1]
 
@@ -324,6 +336,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed+=inputCountBytesUsed
 		POSITION_IN_FILE +=inputCountBytesUsed
 		txSize += inputCountBytesUsed
+		txBaseSize += inputCountBytesUsed
 
 		// TODO: the following might be wrong :)
 		txidData = append( txidData, rawBytes... )
@@ -347,6 +360,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			POSITION_IN_FILE +=skipped
 			txSize += skipped
+			txBaseSize += skipped
 
 			copy(transactions[t].Inputs[i].SourceTxHash[:],buffer32)
 
@@ -363,6 +377,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			POSITION_IN_FILE +=skipped
 			txSize += skipped
+			txBaseSize += skipped
 
 			transactions[t].Inputs[i].OutputIndex = binary.LittleEndian.Uint32(buffer4)
 
@@ -378,6 +393,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			POSITION_IN_FILE +=skipped
 			txSize += skipped
+			txBaseSize += skipped
 
 			txidData = append( txidData, buffer1... )
 			wtxidData = append( wtxidData, buffer1... )
@@ -386,6 +402,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += scriptLengthBytesUsed
 			POSITION_IN_FILE +=scriptLengthBytesUsed
 			txSize += scriptLengthBytesUsed
+			txBaseSize += scriptLengthBytesUsed
 
 			// TODO: prolly broken
 			txidData = append( txidData, rawBytes... )
@@ -409,6 +426,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				bytesUsed += skipped
 				POSITION_IN_FILE +=skipped
 				txSize += skipped
+				txBaseSize += skipped
 
 				transactions[t].Inputs[i].Script = tmpBuffer
 
@@ -426,6 +444,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			POSITION_IN_FILE +=skipped
 			txSize += skipped
+			txBaseSize += skipped
 
 
 			transactions[t].Inputs[i].Sequence = binary.LittleEndian.Uint32(buffer4)
@@ -444,6 +463,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed += skipped
 		POSITION_IN_FILE +=skipped
 		txSize += skipped
+		txBaseSize += skipped
 
 		txidData = append( txidData, buffer1... )
 		wtxidData = append( wtxidData, buffer1... )
@@ -457,6 +477,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed += outputCountBytesUsed
 		POSITION_IN_FILE +=outputCountBytesUsed
 		txSize += outputCountBytesUsed
+		txBaseSize += outputCountBytesUsed
 
 		// TODO: the following might be wrong :)
 		txidData = append( txidData, rawBytes... )
@@ -476,6 +497,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			POSITION_IN_FILE +=skipped
 			txSize += skipped
+			txBaseSize += skipped
 
 			transactions[t].Outputs[o].Value = binary.LittleEndian.Uint64(buffer8)
 
@@ -491,6 +513,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			POSITION_IN_FILE +=skipped
 			txSize += skipped
+			txBaseSize += skipped
 
 			txidData = append( txidData, buffer1... )
 			wtxidData = append( wtxidData, buffer1... )
@@ -504,6 +527,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += scriptLengthBytesUsed
 			POSITION_IN_FILE +=scriptLengthBytesUsed
 			txSize += scriptLengthBytesUsed
+			txBaseSize += scriptLengthBytesUsed
 
 			txidData = append( txidData, rawBytes... )
 			wtxidData = append( wtxidData, rawBytes... )
@@ -523,6 +547,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				bytesUsed += skipped
 				POSITION_IN_FILE +=skipped
 				txSize += skipped
+				txBaseSize += skipped
 
 				transactions[t].Outputs[o].Script = tmpBuffer
 
@@ -615,8 +640,13 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed += skipped
 		POSITION_IN_FILE +=skipped
 		txSize += skipped
+		txBaseSize += skipped
 
 		transactions[t].Locktime = binary.LittleEndian.Uint32(buffer4)
+		transactions[t].Size = txSize
+		transactions[t].BaseSize = txBaseSize
+		transactions[t].Weight = txBaseSize * 3 + txSize
+		transactions[t].VirtualSize = int(math.Ceil(float64(transactions[t].Weight)/4))
 
 		txidData = append( txidData, buffer4... )
 		wtxidData = append( wtxidData, buffer4... )
@@ -635,14 +665,11 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		pass = sha256.Sum256( buffer32 )
 		copy( buffer32, pass[:] )
 		reverseBytes(buffer32)
-		copy( transactions[t].TxId[:], buffer32 )
+		copy( transactions[t].WtxId[:], buffer32 )
 
 		// debug
-		transactions[t].TxIdString = fmt.Sprintf("%x", transactions[t].TxId )
-		transactions[t].WtxIdString = fmt.Sprintf("%x", transactions[t].WtxId )
-
-
-		fmt.Printf("tx")
+		//transactions[t].TxIdString = fmt.Sprintf("%x", transactions[t].TxId )
+		//transactions[t].WtxIdString = fmt.Sprintf("%x", transactions[t].WtxId )
 	}
 
 	return transactions,bytesUsed,nil
