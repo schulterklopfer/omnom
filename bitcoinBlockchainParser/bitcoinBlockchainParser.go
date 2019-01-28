@@ -84,10 +84,13 @@ func filterBlockDataFiles(fileInfos []os.FileInfo) (ret []os.FileInfo) {
 var BYTES_READ int
 
 // todo: use standard length buffers for 4,8,32 and only alloc for variable lengths exceeding 4096 bytes
+var buffer1 = make([]byte,1)
+var buffer2 = make([]byte,2)
 var buffer4 = make([]byte,4)
 var buffer8 = make([]byte,8)
 var buffer32 = make([]byte,32)
-var buffer4096 = make([]byte,32)
+var buffer80 = make([]byte,80)
+var buffer4096 = make([]byte,4096)
 
 func (bc *BitcoinBlockchainParser ) ParseBlocks() {
 	fileInfos, err := ioutil.ReadDir(bc.directory)
@@ -154,14 +157,12 @@ func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, err
 
 	block := new(Block)
 	bytesUsed := 0
-	var bytes []byte
 	var err error
 	var skipped int
 
 	// Read first 4 bytes of blockdata
 	// TODO: What is this?! Maybe some block marker
-	bytes = make([]byte,4)
-	skipped, err = file.Read(bytes)
+	skipped, err = file.Read(buffer4)
 	if err != nil || skipped != 4 {
 		fmt.Println("Skip")
 		return nil,0,err
@@ -170,13 +171,12 @@ func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, err
 	BYTES_READ+=skipped
 
 	// Size
-	bytes = make([]byte, 4)
-	skipped,err = file.Read(bytes)
+	skipped,err = file.Read(buffer4)
 	if err != nil {
 		fmt.Println("Read size")
 		return nil,0,err
 	}
-	block.Size = binary.LittleEndian.Uint32(bytes)
+	block.Size = binary.LittleEndian.Uint32(buffer4)
 	bytesUsed += skipped
 	BYTES_READ+=skipped
 
@@ -190,8 +190,7 @@ func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, err
 	    * difficulty (4 bytes)
 		* nonce (4 bytes)
 	*/
-	bytes = make([]byte,80)
-	skipped, err = file.Read(bytes)
+	skipped, err = file.Read(buffer80)
 	if err != nil || skipped != 80 {
 		fmt.Println("Read header")
 		return nil,0,err
@@ -199,25 +198,23 @@ func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, err
 	bytesUsed += skipped
 	BYTES_READ+=skipped
 
-	block.Version = binary.LittleEndian.Uint32(bytes[0:4])
-	copy(block.PrevHash[:], bytes[4:36])
-	copy(block.MerkleRoot[:], bytes[36:68])
-	block.Timestamp = binary.LittleEndian.Uint32(bytes[68:72])
-	copy(block.Difficulty[:], bytes[72:76])
-	block.Nonce = binary.LittleEndian.Uint32(bytes[76:80])
+	block.Version = binary.LittleEndian.Uint32(buffer80[0:4])
+	copy(block.PrevHash[:], buffer80[4:36])
+	copy(block.MerkleRoot[:], buffer80[36:68])
+	block.Timestamp = binary.LittleEndian.Uint32(buffer80[68:72])
+	copy(block.Difficulty[:], buffer80[72:76])
+	block.Nonce = binary.LittleEndian.Uint32(buffer80[76:80])
 
 	// Create block hash from those 80 bytes
-	blockHash := make( []byte,32 )
-	pass := sha256.Sum256(bytes)
-	copy( blockHash, pass[:] )
-	pass = sha256.Sum256( blockHash )
-	copy( blockHash, pass[:] )
-	reverseBytes(blockHash)
-	copy( block.Hash[:], blockHash )
+	pass := sha256.Sum256(buffer80)
+	copy( buffer32, pass[:] )
+	pass = sha256.Sum256( buffer32 )
+	copy( buffer32, pass[:] )
+	reverseBytes(buffer32)
+	copy( block.Hash[:], buffer32 )
 
 	// Transaction count bytes
-	bytes = make([]byte,1)
-	skipped, err = file.Read(bytes)
+	skipped, err = file.Read(buffer1)
 	if err != nil || skipped != 1 {
 		fmt.Println("Read tx count")
 		return nil,0,err
@@ -225,7 +222,7 @@ func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, err
 	bytesUsed+=skipped
 	BYTES_READ+=skipped
 
-	txCount, txCountBytesUsed, _, err := readCount(bytes[0], file)
+	txCount, txCountBytesUsed, _, err := readCount(buffer1[0], file)
 
 	if err != nil {
 		fmt.Println("Read tx count")
@@ -256,15 +253,14 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 	transactions := make( []Transaction, transactionCount )
 
 	bytesUsed := 0
-	var bytes []byte
 	var err error
 	var skipped int
+	var tmpBuffer []byte
 
 	for t:=0; t<transactionCount; t++ {
 		rawTx := make([]byte,0)
 		// Version
-		bytes = make( []byte, 4)
-		skipped, err = file.Read(bytes )
+		skipped, err = file.Read(buffer4 )
 		if err != nil || skipped != 4 {
 			fmt.Println("Read version")
 			return nil,0,err
@@ -272,13 +268,12 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed += skipped
 		BYTES_READ+=skipped
 
-		transactions[t].Version = binary.LittleEndian.Uint32(bytes)
+		transactions[t].Version = binary.LittleEndian.Uint32(buffer4)
 
-		reverseBytes(bytes)
-		rawTx = append( rawTx, bytes... )
+		reverseBytes(buffer4)
+		rawTx = append( rawTx, buffer4... )
 
-		bytes = make( []byte, 1)
-		skipped, err = file.Read(bytes)
+		skipped, err = file.Read(buffer1)
 		if err != nil || skipped != 1 {
 			fmt.Println("Read input count 0")
 			return nil,0,err
@@ -286,13 +281,12 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		bytesUsed += skipped
 		BYTES_READ+=skipped
 
-		b := bytes[0]
+		b := buffer1[0]
 
 		// is witness flag present?
 		// 0 says yes, cause there are no tx with 0 inputs
 		if b==0 {
-			bytes = make( []byte, 2)
-			skipped, err = file.Read(bytes)
+			skipped, err = file.Read(buffer2)
 			if err != nil || skipped != 2 {
 				fmt.Println("Read input count 1")
 				return nil,0,err
@@ -300,7 +294,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			BYTES_READ+=skipped
 
-			b = bytes[1]
+			b = buffer2[1]
 
 			transactions[t].Witness = true
 		}
@@ -322,8 +316,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		for i:=0; i<int(inputCount); i++ {
 
 			// Source tx hash
-			bytes = make( []byte, 32)
-			skipped, err = file.Read(bytes )
+			skipped, err = file.Read(buffer32 )
 			if err != nil || skipped != 32 {
 				fmt.Println("Read input hash")
 				return nil,0,err
@@ -332,13 +325,12 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			BYTES_READ+=skipped
 
 
-			copy(transactions[t].Inputs[i].SourceTxHash[:],bytes)
-			reverseBytes(bytes)
-			rawTx = append( rawTx, bytes... )
+			copy(transactions[t].Inputs[i].SourceTxHash[:],buffer32)
+			reverseBytes(buffer32)
+			rawTx = append( rawTx, buffer32... )
 
 			// Source tx output index
-			bytes = make( []byte, 4)
-			skipped, err = file.Read(bytes)
+			skipped, err = file.Read(buffer4)
 			if err != nil || skipped != 4 {
 				fmt.Println("Read input index")
 				return nil,0,err
@@ -347,13 +339,12 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			BYTES_READ+=skipped
 
 
-			transactions[t].Inputs[i].OutputIndex = binary.LittleEndian.Uint32(bytes)
-			reverseBytes(bytes)
-			rawTx = append( rawTx, bytes... )
+			transactions[t].Inputs[i].OutputIndex = binary.LittleEndian.Uint32(buffer4)
+			reverseBytes(buffer4)
+			rawTx = append( rawTx, buffer4... )
 
 			// Script length
-			bytes = make( []byte, 1)
-			skipped, err = file.Read(bytes)
+			skipped, err = file.Read(buffer1)
 			if err != nil || skipped != 1 {
 				fmt.Println("Read script length")
 				return nil,0,err
@@ -361,7 +352,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			bytesUsed += skipped
 			BYTES_READ+=skipped
 
-			scriptLength,scriptLengthBytesUsed,rawBytes,err := readCount(bytes[0], file)
+			scriptLength,scriptLengthBytesUsed,rawBytes,err := readCount(buffer1[0], file)
 			bytesUsed += scriptLengthBytesUsed
 
 			// TODO: prolly broken
@@ -371,8 +362,14 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 
 			// Script
 			if scriptLength > 0 {
-				bytes = make( []byte, scriptLength)
-				skipped, err = file.Read(bytes)
+
+				if scriptLength > 4096 {
+					tmpBuffer = make( []byte, scriptLength)
+				} else {
+					tmpBuffer = buffer4096[:scriptLength]
+				}
+
+				skipped, err = file.Read(tmpBuffer)
 				if err != nil || skipped != int(scriptLength) {
 					fmt.Println("Read input script", err)
 					return nil,0,err
@@ -380,16 +377,15 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				bytesUsed += skipped
 				BYTES_READ+=skipped
 
-				transactions[t].Inputs[i].Script = bytes
+				transactions[t].Inputs[i].Script = tmpBuffer
 
 				// TODO: prolly broken
-				reverseBytes(bytes)
-				rawTx = append( rawTx, bytes...)
+				reverseBytes(tmpBuffer)
+				rawTx = append( rawTx, tmpBuffer...)
 			}
 
 			// Sequence
-			bytes = make( []byte, 4)
-			skipped, err = file.Read(bytes)
+			skipped, err = file.Read(buffer4)
 			if err != nil || skipped != 4 {
 				fmt.Println("Read sequence")
 				return nil,0,err
@@ -398,17 +394,16 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			BYTES_READ+=skipped
 
 
-			transactions[t].Inputs[i].Sequence = binary.LittleEndian.Uint32(bytes)
+			transactions[t].Inputs[i].Sequence = binary.LittleEndian.Uint32(buffer4)
 
 			// TODO: prolly broken
-			reverseBytes(bytes)
-			rawTx = append( rawTx, bytes... )
+			reverseBytes(buffer4)
+			rawTx = append( rawTx, buffer4... )
 
 		}
 
 		// Output count
-		bytes = make( []byte, 1)
-		skipped, err = file.Read(bytes)
+		skipped, err = file.Read(buffer1)
 		if err != nil || skipped != 1 {
 			fmt.Println("Peek output count")
 			return nil,0,err
@@ -417,7 +412,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		BYTES_READ+=skipped
 
 
-		outputCount,outputCountBytesUsed,rawBytes,err := readCount(bytes[0], file)
+		outputCount,outputCountBytesUsed,rawBytes,err := readCount(buffer1[0], file)
 		if err != nil {
 			fmt.Println("output count")
 			return nil,0,err
@@ -435,8 +430,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		for o:=0; o<int(outputCount); o++ {
 
 			// Value
-			bytes = make( []byte, 8)
-			skipped, err = file.Read(bytes)
+			skipped, err = file.Read(buffer8)
 			if err != nil || skipped != 8 {
 				fmt.Println("Read value")
 				return nil,0,err
@@ -445,15 +439,14 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			BYTES_READ+=skipped
 
 
-			transactions[t].Outputs[o].Value = binary.LittleEndian.Uint64(bytes)
+			transactions[t].Outputs[o].Value = binary.LittleEndian.Uint64(buffer8)
 
 			// TODO: the following might be wrong :)
-			reverseBytes(bytes)
-			rawTx = append( rawTx, bytes... )
+			reverseBytes(buffer8)
+			rawTx = append( rawTx, buffer8... )
 
 			// Script length
-			bytes = make( []byte, 1)
-			skipped, err = file.Read(bytes)
+			skipped, err = file.Read(buffer1)
 			if err != nil || skipped != 1 {
 				fmt.Println("Peek script length")
 				return nil,0,err
@@ -462,7 +455,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			BYTES_READ+=skipped
 
 
-			scriptLength,scriptLengthBytesUsed,rawBytes,err := readCount(bytes[0], file)
+			scriptLength,scriptLengthBytesUsed,rawBytes,err := readCount(buffer1[0], file)
 			if err != nil {
 				fmt.Println("script length")
 				return nil,0,err
@@ -476,8 +469,12 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 
 			// Script
 			if scriptLength > 0 {
-				bytes = make( []byte, scriptLength)
-				skipped, err = file.Read(bytes)
+				if scriptLength > 4096 {
+					tmpBuffer = make( []byte, scriptLength)
+				} else {
+					tmpBuffer = buffer4096[:scriptLength]
+				}
+				skipped, err = file.Read(tmpBuffer)
 				if err != nil || skipped != int(scriptLength) {
 					fmt.Println("Read output script", err)
 					return nil,0,err
@@ -485,19 +482,18 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				bytesUsed += skipped
 				BYTES_READ+=skipped
 
-				transactions[t].Outputs[o].Script = bytes
+				transactions[t].Outputs[o].Script = tmpBuffer
 
 				// TODO: prolly broken
-				reverseBytes(bytes)
-				rawTx = append( rawTx, bytes...)
+				reverseBytes(tmpBuffer)
+				rawTx = append( rawTx, tmpBuffer...)
 			}
 		}
 
 		if transactions[t].Witness {
 			// Witness length
 			for i:=0; i<int(inputCount); i++ {
-				bytes = make( []byte, 1)
-				skipped, err = file.Read(bytes)
+				skipped, err = file.Read(buffer1)
 				if err != nil || skipped != 1 {
 					fmt.Println("Read witness length")
 					return nil,0,err
@@ -505,7 +501,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				bytesUsed += skipped
 				BYTES_READ+=skipped
 
-				witnessLength,witnessLengthBytesUsed,_,err := readCount(bytes[0], file)
+				witnessLength,witnessLengthBytesUsed,_,err := readCount(buffer1[0], file)
 				if err != nil {
 					fmt.Println("witness length")
 					return nil,0,err
@@ -517,8 +513,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				transactions[t].WitnessItems = make([]WitnessItem,witnessLength)
 				for w:=0; w<int(witnessLength); w++ {
 					// Witness item length
-					bytes = make( []byte, 1)
-					skipped, err = file.Read(bytes)
+					skipped, err = file.Read(buffer1)
 					if err != nil || skipped != 1 {
 						fmt.Println("Read witness item length")
 						return nil,0,err
@@ -526,21 +521,25 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 					bytesUsed += skipped
 					BYTES_READ+=skipped
 
-					witnessItemLength,witnessItemLengthBytesUsed,_,err := readCount(bytes[0], file)
+					witnessItemLength,witnessItemLengthBytesUsed,_,err := readCount(buffer1[0], file)
 					if err != nil {
 						fmt.Println("witness item length")
 						return nil,0,err
 					}
 
 					bytesUsed += witnessItemLengthBytesUsed
-					bytes = make([]byte,witnessItemLength)
+					if witnessItemLength > 4096 {
+						tmpBuffer = make( []byte, witnessItemLength)
+					} else {
+						tmpBuffer = buffer4096[:witnessItemLength]
+					}
 					//skipped64, err := file.Seek(int64(witnessItemLength),1)
-					skipped, err = file.Read(bytes)
+					skipped, err = file.Read(tmpBuffer)
 					if err != nil || skipped != int(witnessItemLength) {
 						fmt.Println("Read witness")
 						return nil,0,err
 					}
-					transactions[t].WitnessItems[w].Data = bytes
+					transactions[t].WitnessItems[w].Data = tmpBuffer
 					bytesUsed += skipped
 					BYTES_READ+=skipped
 
@@ -549,8 +548,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		}
 
 		// Lock time
-		bytes = make([]byte,4)
-		skipped, err = file.Read(bytes)
+		skipped, err = file.Read(buffer4)
 		if err != nil || skipped != 4 {
 			fmt.Println("Read lock time")
 			return nil,0,err
@@ -559,11 +557,11 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		BYTES_READ+=skipped
 
 
-		transactions[t].Locktime = binary.LittleEndian.Uint32(bytes)
+		transactions[t].Locktime = binary.LittleEndian.Uint32(buffer4)
 
 		// TODO: the following might be wrong :)
-		reverseBytes(bytes)
-		rawTx = append( rawTx, bytes... )
+		reverseBytes(buffer4)
+		rawTx = append( rawTx, buffer4... )
 	}
 
 	return transactions,bytesUsed,nil
@@ -581,7 +579,6 @@ func readCount( b byte, file *os.File ) (uint64,int,[]byte,error) {
 	} else {
 		byteCount := 0
 
-		uint64bytes := make( []byte,8 )
 		if b == 253 {
 			byteCount = 2
 		} else if b == 254 {
@@ -589,7 +586,15 @@ func readCount( b byte, file *os.File ) (uint64,int,[]byte,error) {
 		} else if b == 255 {
 			byteCount = 8
 		}
-		bytes := make( []byte,byteCount )
+
+		var bytes []byte
+		if byteCount == 2 {
+			bytes = buffer2
+		} else if byteCount == 4 {
+			bytes = buffer4
+		} else if byteCount == 8 {
+			bytes = buffer8
+		}
 
 		skipped, err := file.Read(bytes)
 		if err != nil || skipped != byteCount {
@@ -602,8 +607,12 @@ func readCount( b byte, file *os.File ) (uint64,int,[]byte,error) {
 
 		// TODO: check if I have to revers rawBytes
 		rawBytes = bytes
-		copy(uint64bytes[0:byteCount], bytes)
-		val = binary.LittleEndian.Uint64(uint64bytes)
+		copy(buffer8[0:byteCount], bytes)
+		for i:=0; i<8-byteCount; i++  {
+			buffer8[i+byteCount]=0
+		}
+
+		val = binary.LittleEndian.Uint64(buffer8)
 	}
 	return val,bytesUsed,rawBytes,nil
 }
