@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"github.com/btcsuite/btcd/chaincfg"
 	"io/ioutil"
 	"log"
 	"math"
@@ -72,7 +73,7 @@ type TxInput struct {
 
 type TxOutput struct {
 	Value uint64
-	Script []byte
+	Script *Script
 
 }
 
@@ -96,6 +97,7 @@ func filterBlockDataFiles(fileInfos []os.FileInfo) (ret []os.FileInfo) {
 }
 
 var POSITION_IN_FILE int
+var CHAINCFG = &chaincfg.TestNet3Params
 
 // todo: use standard length buffers for 4,8,32 and only alloc for variable lengths exceeding 4096 bytes
 var buffer1 = make([]byte,1)
@@ -147,7 +149,7 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() {
 				break
 			}
 
-			if blockCount%10000 == 0 {
+			if  blockCount != 0 && blockCount%10000 == 0 {
 				elapsed := time.Since(start)
 				fmt.Printf("Traversing %d blocks took: %s\n", blockCount, elapsed)
 				fmt.Printf("Traversing 1 block took: %s\n", time.Duration(elapsed.Nanoseconds()/int64(blockCount)))
@@ -157,11 +159,11 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() {
 				fmt.Println("---")
 
 			}
+			blockCount++
+
 		}
 		fmt.Printf("Done: %d of %d bytes, %d blocks \n", nextBlockPosition, fileInfo.Size(), blockCount )
 		fmt.Println("---")
-
-		blockCount++
 
 		file.Close()
 	}
@@ -225,7 +227,7 @@ func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, err
 	copy( buffer32, pass[:] )
 	pass = sha256.Sum256( buffer32 )
 	copy( buffer32, pass[:] )
-	reverseBytes(buffer32)
+	ReverseBytes(buffer32)
 	copy( block.Hash[:], buffer32 )
 
 	block.HashString = fmt.Sprintf("%x", block.Hash )
@@ -549,7 +551,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				txSize += skipped
 				txBaseSize += skipped
 
-				transactions[t].Outputs[o].Script = tmpBuffer
+				transactions[t].Outputs[o].Script =  NewScript( tmpBuffer )
 
 				txidData = append( txidData, tmpBuffer... )
 				wtxidData = append( wtxidData, tmpBuffer... )
@@ -656,7 +658,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		copy( buffer32, pass[:] )
 		pass = sha256.Sum256( buffer32 )
 		copy( buffer32, pass[:] )
-		reverseBytes(buffer32)
+		ReverseBytes(buffer32)
 		copy( transactions[t].TxId[:], buffer32 )
 
 		// create wtxid
@@ -664,7 +666,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 		copy( buffer32, pass[:] )
 		pass = sha256.Sum256( buffer32 )
 		copy( buffer32, pass[:] )
-		reverseBytes(buffer32)
+		ReverseBytes(buffer32)
 		copy( transactions[t].WtxId[:], buffer32 )
 
 		// debug
@@ -722,26 +724,10 @@ func readCount( b byte, file *os.File ) (uint64,int,[]byte,error) {
 	return val,bytesUsed,rawBytes,nil
 }
 
-func reverseBytes(bytes []byte) {
+
+func ReverseBytes(bytes []byte) {
 	for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
 		bytes[i], bytes[j] = bytes[j], bytes[i]
 	}
 }
 
-func obfuscateBytes(bytes []byte, obfuscateKey []byte ) {
-	byteCount := len( bytes )
-	keySize := len( obfuscateKey )
-
-	if keySize == 0 {
-		return
-	}
-
-	for i, j := 0, 0; i < byteCount; i++ {
-		// XOR with reepeating obfuscateKey
-		bytes[i] ^= obfuscateKey[j]
-		j++
-		if j == keySize {
-			j = 0
-		}
-	}
-}
