@@ -7,19 +7,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	_ "github.com/mattn/go-sqlite3"
-
+	"time"
 )
-
-const SQLInsertBlock = "INSERT INTO block(hash,prevblock_id,nextblock_id,version,blocktime) VALUES(?,?,?,?,?);"
-const SQLInsertTx = "INSERT INTO tx(txid,block_id,hash,locktime,size,vsize,weight,base_size) VALUES(?,?,?,?,?,?,?,?);"
-const SQLUpdateTxFeeAmount = "UPDATE tx SET fee=?, amount=? WHERE id=?;"
-const SQLUpsertAddress = "INSERT INTO address(address,balance) VALUES(?,?) ON CONFLICT(address) DO UPDATE SET balance=balance+excluded.balance;"
-
-const SQLUpdateAddressBalance = "UPDATE address SET balance=balance+? WHERE id=?;"
-const SQLInsertInput = "INSERT INTO tx_input(tx_id,output_id) VALUES(?,?);"
-const SQLInsertOutput= "INSERT INTO tx_output(tx_id,idx,amount,address_id) VALUES(?,?,?,?);"
-
-const SQLSelectOutput= "SELECT o.id, o.amount, o.address_id FROM tx LEFT JOIN tx_output o ON tx.id = o.tx_id LEFT JOIN address a on o.address_id = a.id WHERE txid=? AND o.idx=?"
 
 type FullSqlite3Index struct {
 	//db and statements
@@ -51,8 +40,17 @@ func NewFullSqlite3Index( chainCfg *chaincfg.Params) *FullSqlite3Index {
 
 func ( indexer *FullSqlite3Index) OnStart() error {
 
+	fileName := fmt.Sprintf("fullIndex-%d.sqlite", time.Now().Unix() )
+
+
 	var err error
-	indexer.db, err = sql.Open("sqlite3", "file:index.sqlite")
+	indexer.db, err = sql.Open("sqlite3", "file:"+fileName )
+	if err != nil {
+		return err
+	}
+
+	// do onStart statements here
+	_,err = indexer.db.Exec(SQLOnStart)
 	if err != nil {
 		return err
 	}
@@ -132,10 +130,18 @@ func ( indexer *FullSqlite3Index) OnEnd() error {
 	if err != nil {
 		return err
 	}
+
+	// do onEnd statements
+	_,err = indexer.db.Exec(SQLOnEnd)
+	if err != nil {
+		return err
+	}
+
 	return nil
+
 }
 
-func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *bitcoinBlockchainParser.Block ) {
+func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *bitcoinBlockchainParser.Block ) error {
 	// anaylse current block
 
 	// insert block into db
@@ -148,11 +154,11 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 
 	r, err := indexer.sqlInsertBlockStmt.Exec( currentBlock.HashString, indexer.sqlBlockId, nextBlockId, currentBlock.Version, currentBlock.Timestamp )
 	if err != nil {
-		panic( err )
+		return err
 	}
 	indexer.sqlBlockId,err=r.LastInsertId()
 	if err != nil {
-		panic( err )
+		return err
 	}
 	txCount := len(currentBlock.Transactions)
 	for i:=0; i<txCount; i++ {
@@ -165,14 +171,9 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 			currentBlock.Transactions[i].VirtualSize,
 			currentBlock.Transactions[i].Weight,
 			currentBlock.Transactions[i].BaseSize)
+
 		if err != nil {
-			fmt.Println( err)
-			stmt,_ := indexer.sqlTx.Prepare("SELECT block_id FROM tx WHERE txid=?")
-			var id int
-			err:=stmt.QueryRow(currentBlock.Transactions[i].TxIdString).Scan(&id)
-			fmt.Printf("TX %s %d %s\n",currentBlock.Transactions[i].TxIdString, id, err)
-
-
+			return err
 		}
 		indexer.sqlTxId,err=r.LastInsertId()
 
@@ -189,8 +190,7 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 			err := indexer.sqlSelectOutputStmt.QueryRow( txIn.SourceTxHashString, txIn.OutputIndex ).
 				Scan(&outputId, &outputAmount, &addressId )
 			if err == nil {
-				fmt.Println( err)
-				continue
+				return err
 			}
 
 			inSum += uint64(outputAmount)
@@ -198,12 +198,12 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 			// Update address. Was created in outputs already
 			_,err = indexer.sqlUpdateAddressBalanceStmt.Exec( -outputAmount, addressId )
 			if err != nil {
-				fmt.Println( err)
+				return err
 			}
 
 			_,err = indexer.sqlInsertInputStmt.Exec( indexer.sqlTxId, outputId )
 			if err != nil {
-				fmt.Println( err)
+				return err
 			}
 		}
 
@@ -226,16 +226,16 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 
 				r, err := indexer.sqlUpsertAddress.Exec( address, int(value) )
 				if err != nil {
-					fmt.Println( err)
+					return err
 				}
 				indexer.sqlAddressId,err = r.LastInsertId()
 
 				if err != nil {
-					fmt.Println( err)
+					return err
 				}
 				_,err = indexer.sqlInsertOutputStmt.Exec( indexer.sqlTxId, j, value, indexer.sqlAddressId )
 				if err != nil {
-					fmt.Println( err)
+					return err
 				}
 			}
 			//fmt.Println(err, targetAddresses, txOut)
@@ -243,7 +243,8 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 
 		_, err = indexer.sqlUpdateTxFeeAmountStmt.Exec( int(inSum-outSum), int(outSum), indexer.sqlTxId )
 		if err != nil {
-			fmt.Println( err)
+			return err
 		}
 	}
+	return nil
 }

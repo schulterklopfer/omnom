@@ -14,10 +14,11 @@ zmqpubrawtx=tcp://0.0.0.0:18502
  */
 
 import (
+	"fmt"
+	"github.com/btcsuite/btcd/chaincfg"
 	"omnom/bitcoinBlockchainParser"
 	"omnom/indexer"
 	"omnom/indexer/addressTxSqlite3Index"
-	"github.com/btcsuite/btcd/chaincfg"
 	"path"
 )
 
@@ -27,6 +28,7 @@ func main() {
 	var idx indexer.Indexer
 	idx = addressTxSqlite3Index.NewAddressTxSqlite3Index(&chaincfg.TestNet3Params)
 
+	//idx = fullSqlite3Index.NewFullSqlite3Index(&chaincfg.TestNet3Params)
 	err := idx.OnStart()
 
 	if err != nil {
@@ -34,7 +36,10 @@ func main() {
 	}
 
 	bp := bitcoinBlockchainParser.NewBitcoinBlockchainParser(path.Join("testnet3", "blocks2"), idx.OnBlock )
-	bp.ParseBlocks()
+	err = bp.ParseBlocks()
+	if err != nil {
+		fmt.Println(err)
+	}
 	bp.Close()
 
 	idx.OnEnd()

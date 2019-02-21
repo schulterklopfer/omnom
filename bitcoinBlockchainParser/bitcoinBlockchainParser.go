@@ -7,7 +7,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/pkg/errors"
 	"io/ioutil"
-	"log"
 	"math"
 	"os"
 	"path"
@@ -22,7 +21,7 @@ type BitcoinBlockchainParser struct {
 	onBlock OnBlockCallback
 }
 
-type OnBlockCallback func( int, int, *Block )
+type OnBlockCallback func( int, int, *Block ) error
 
 type BlockIndex struct {
 	Hash [32]byte
@@ -348,12 +347,11 @@ func (bc *BitcoinBlockchainParser) parseBlockIndex( file *os.File ) (*BlockIndex
 
 }
 
-func (bc *BitcoinBlockchainParser ) ParseBlocks() {
+func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 
 	chains, err := bc.buildBlockIndexChains()
 	if err != nil {
-		log.Fatal(err)
-		return
+		return err
 	}
 
 	// chains is sorted by length
@@ -388,30 +386,31 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() {
 
 			file, err = os.Open( fileName )
 			if err != nil {
-				log.Fatal(err)
-				return
+				return err
 			}
 		}
 
 		// seek to position in file and parse Block from there
 		_, err = file.Seek(bi.Position,0)
-
+		if err != nil {
+			return err
+		}
 		block, bytesUsed, err := bc.parseBlock(file)
+		if err != nil {
+			return err
+		}
 		if block == nil {
-			fmt.Println(err)
 			break
 		}
 		if int(block.Size) != bytesUsed-8 {
-			fmt.Println("Data mismatch")
-			break
+			return errors.New("Data mismatch")
 		}
 
 		if bc.onBlock != nil {
-			bc.onBlock( blockCount, longestChain.Length, block )
-		}
-
-		if err != nil {
-			break
+			err = bc.onBlock( blockCount, longestChain.Length, block )
+			if err != nil {
+				return err
+			}
 		}
 
 		if  blockCount != 0 && blockCount%1000 == 0 {
@@ -493,6 +492,7 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() {
 	}
 	fmt.Printf("Traversing all blocks took: %s\n", blockCount, time.Since(start))
 	*/
+	return nil
 }
 
 func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, error) {
