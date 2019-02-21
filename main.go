@@ -14,9 +14,9 @@ zmqpubrawtx=tcp://0.0.0.0:18502
  */
 
 import (
-	"cyphernode_indexer/bitcoinBlockchainParser"
-	"cyphernode_indexer/indexer"
-	"cyphernode_indexer/indexer/addressTxSqlite3Index"
+	"omnom/bitcoinBlockchainParser"
+	"omnom/indexer"
+	"omnom/indexer/addressTxSqlite3Index"
 	"github.com/btcsuite/btcd/chaincfg"
 	"path"
 )

@@ -1,6 +1,6 @@
 package indexer
 
-import "cyphernode_indexer/bitcoinBlockchainParser"
+import "omnom/bitcoinBlockchainParser"
 
 type Indexer interface {
 	OnStart() error

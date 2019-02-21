@@ -1,7 +1,7 @@
 package fullSqlite3Index
 
 import (
-	"cyphernode_indexer/bitcoinBlockchainParser"
+	"omnom/bitcoinBlockchainParser"
 	"database/sql"
 	"fmt"
 	"github.com/btcsuite/btcd/chaincfg"
