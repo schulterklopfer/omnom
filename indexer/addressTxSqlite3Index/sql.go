@@ -42,7 +42,6 @@ CREATE INDEX idx_address_address_id ON tx_address (address_id);
 CREATE UNIQUE INDEX idx_transaction_txid ON tx (txid);
 CREATE UNIQUE INDEX idx_transaction_hash ON tx (hash);
 CREATE INDEX idx_transaction_locktime ON tx (locktime);
-CREATE INDEX idx_transaction_fee ON tx (fee);
 CREATE INDEX idx_transaction_size ON tx (size);
 CREATE INDEX idx_transaction_vsize ON tx (vsize);
 CREATE INDEX idx_transaction_blockhash ON tx (blockhash);
