@@ -16,19 +16,13 @@ type AddressTxSqlite3Index struct {
 	db *sql.DB
 	sqlTx *sql.Tx
 
-	sqlInsertBlockStmt *sql.Stmt
-	sqlInsertInputStmt *sql.Stmt
-	sqlInsertOutputStmt *sql.Stmt
-	sqlUpdateAddressBalanceStmt *sql.Stmt
-	sqlInsertTxStmt *sql.Stmt
-	sqlUpdateTxFeeAmountStmt *sql.Stmt
-	sqlSelectOutputStmt  *sql.Stmt
-	sqlUpsertAddress *sql.Stmt
+	sqlInsertTxStmt         *sql.Stmt
+	sqlInsertAddressStmt    *sql.Stmt
+	sqlSelectAddressStmt    *sql.Stmt
+	sqlInsertTxAddressStmt  *sql.Stmt
 
 	//vars
-	sqlBlockId int64
 	sqlTxId int64
-	sqlAddressId int64
 	chainCfg *chaincfg.Params
 }
 
@@ -58,35 +52,19 @@ func ( indexer *AddressTxSqlite3Index) OnStart() error {
 	if err != nil {
 		return err
 	}
-	indexer.sqlInsertBlockStmt, err = indexer.sqlTx.Prepare(SQLInsertBlock)
+	indexer.sqlInsertTxAddressStmt, err = indexer.sqlTx.Prepare(SQLInsertTxAddress)
 	if err != nil {
 		return err
 	}
-	indexer.sqlUpdateAddressBalanceStmt, err = indexer.sqlTx.Prepare(SQLUpdateAddressBalance)
+	indexer.sqlInsertAddressStmt, err = indexer.sqlTx.Prepare(SQLInsertAddress)
 	if err != nil {
 		return err
 	}
-	indexer.sqlUpsertAddress, err = indexer.sqlTx.Prepare(SQLUpsertAddress)
+	indexer.sqlSelectAddressStmt, err = indexer.sqlTx.Prepare(SQLSelectAddress)
 	if err != nil {
 		return err
 	}
 	indexer.sqlInsertTxStmt, err = indexer.sqlTx.Prepare(SQLInsertTx)
-	if err != nil {
-		return err
-	}
-	indexer.sqlUpdateTxFeeAmountStmt, err = indexer.sqlTx.Prepare(SQLUpdateTxFeeAmount)
-	if err != nil {
-		return err
-	}
-	indexer.sqlInsertInputStmt, err = indexer.sqlTx.Prepare(SQLInsertInput)
-	if err != nil {
-		return err
-	}
-	indexer.sqlInsertOutputStmt, err = indexer.sqlTx.Prepare(SQLInsertOutput)
-	if err != nil {
-		return err
-	}
-	indexer.sqlSelectOutputStmt, err = indexer.sqlTx.Prepare(SQLSelectOutput)
 	if err != nil {
 		return err
 	}
@@ -98,19 +76,15 @@ func ( indexer *AddressTxSqlite3Index) OnEnd() error {
 	if err != nil {
 		return err
 	}
-	err = indexer.sqlInsertBlockStmt.Close()
+	err = indexer.sqlInsertTxAddressStmt.Close()
 	if err != nil {
 		return err
 	}
-	err = indexer.sqlInsertInputStmt.Close()
+	err = indexer.sqlInsertAddressStmt.Close()
 	if err != nil {
 		return err
 	}
-	err = indexer.sqlInsertOutputStmt.Close()
-	if err != nil {
-		return err
-	}
-	err = indexer.sqlUpdateAddressBalanceStmt.Close()
+	err = indexer.sqlSelectAddressStmt.Close()
 	if err != nil {
 		return err
 	}
@@ -118,14 +92,7 @@ func ( indexer *AddressTxSqlite3Index) OnEnd() error {
 	if err != nil {
 		return err
 	}
-	err = indexer.sqlUpdateTxFeeAmountStmt.Close()
-	if err != nil {
-		return err
-	}
-	err = indexer.sqlSelectOutputStmt.Close()
-	if err != nil {
-		return err
-	}
+
 	err = indexer.db.Close()
 	if err != nil {
 		return err
@@ -145,27 +112,12 @@ func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBl
 	// anaylse current block
 
 	// insert block into db
-	nextBlockId := int64(0)
-
-	if height < total-1 {
-		// infering the nextblock id by adding 2 is safe here, cause the blocks will be added in chronological order
-		nextBlockId = indexer.sqlBlockId+2
-	}
-
-	r, err := indexer.sqlInsertBlockStmt.Exec( currentBlock.HashString, indexer.sqlBlockId, nextBlockId, currentBlock.Version, currentBlock.Timestamp )
-	if err != nil {
-		return err
-	}
-	indexer.sqlBlockId,err=r.LastInsertId()
-	if err != nil {
-		return err
-	}
 	txCount := len(currentBlock.Transactions)
 	for i:=0; i<txCount; i++ {
 		r, err := indexer.sqlInsertTxStmt.Exec(
 			currentBlock.Transactions[i].TxIdString,
-			indexer.sqlBlockId,
 			currentBlock.Transactions[i].WtxIdString,
+			currentBlock.HashString,
 			currentBlock.Transactions[i].Locktime,
 			currentBlock.Transactions[i].Size,
 			currentBlock.Transactions[i].VirtualSize,
@@ -175,43 +127,16 @@ func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBl
 		if err != nil {
 			return err
 		}
-		indexer.sqlTxId,err=r.LastInsertId()
 
-		txInCount:=len(currentBlock.Transactions[i].Inputs)
-		txOutCount:=len(currentBlock.Transactions[i].Outputs)
-		inSum := uint64(0)
-		outSum := uint64(0)
-
-		for j:=0; j<txInCount; j++ {
-			txIn := currentBlock.Transactions[i].Inputs[j]
-			var outputId int
-			var outputAmount int64
-			var addressId int
-			err := indexer.sqlSelectOutputStmt.QueryRow( txIn.SourceTxHashString, txIn.OutputIndex ).
-				Scan(&outputId, &outputAmount, &addressId )
-			if err == nil {
-				return err
-			}
-
-			inSum += uint64(outputAmount)
-
-			// Update address. Was created in outputs already
-			_,err = indexer.sqlUpdateAddressBalanceStmt.Exec( -outputAmount, addressId )
-			if err != nil {
-				return err
-			}
-
-			_,err = indexer.sqlInsertInputStmt.Exec( indexer.sqlTxId, outputId )
-			if err != nil {
-				return err
-			}
+		if currentBlock.Transactions[i].TxIdString()=="a6911033ace9a1ac6f22d472a22df7762a535d3bc751d94aeeab713eebab64d7"  {
+			fmt.Println("found tx");
 		}
 
+		indexer.sqlTxId,err=r.LastInsertId()
+
+		txOutCount:=len(currentBlock.Transactions[i].Outputs)
+
 		for j:=0; j<txOutCount; j++ {
-
-			value := currentBlock.Transactions[i].Outputs[j].Value
-			outSum += value
-
 
 			if currentBlock.Transactions[i].Outputs[j].Script == nil ||
 				currentBlock.Transactions[i].Outputs[j].Script.Data == nil ||
@@ -219,31 +144,37 @@ func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBl
 				continue
 			}
 
+			if currentBlock.Transactions[i].TxIdString()=="a6911033ace9a1ac6f22d472a22df7762a535d3bc751d94aeeab713eebab64d7" {
+				fmt.Printf("%x", currentBlock.Transactions[i].Outputs[j].Script.Data)
+
+			}
 			_,targetAddresses,_,_ := txscript.ExtractPkScriptAddrs(currentBlock.Transactions[i].Outputs[j].Script.Data, indexer.chainCfg )
 
 			if targetAddresses != nil && len(targetAddresses) > 0 {
-				address := targetAddresses[0].EncodeAddress()
+				for k:=0; k< len(targetAddresses); k++ {
+					address := targetAddresses[k].EncodeAddress()
 
-				r, err := indexer.sqlUpsertAddress.Exec( address, int(value) )
-				if err != nil {
-					return err
-				}
-				indexer.sqlAddressId,err = r.LastInsertId()
+					var addressId int64
+					err := indexer.sqlSelectAddressStmt.QueryRow( address ).
+						Scan( &addressId )
 
-				if err != nil {
-					return err
-				}
-				_,err = indexer.sqlInsertOutputStmt.Exec( indexer.sqlTxId, j, value, indexer.sqlAddressId )
-				if err != nil {
-					return err
+					if addressId == 0 {
+						r, err = indexer.sqlInsertAddressStmt.Exec( address )
+						if err != nil {
+							return err
+						}
+						addressId,err = r.LastInsertId()
+						if err != nil {
+							return err
+						}
+					}
+
+					_, err = indexer.sqlInsertTxAddressStmt.Exec( indexer.sqlTxId, addressId )
+					if err != nil {
+						return err
+					}
 				}
 			}
-			//fmt.Println(err, targetAddresses, txOut)
-		}
-
-		_, err = indexer.sqlUpdateTxFeeAmountStmt.Exec( int(inSum-outSum), int(outSum), indexer.sqlTxId )
-		if err != nil {
-			return err
 		}
 	}
 	return nil
