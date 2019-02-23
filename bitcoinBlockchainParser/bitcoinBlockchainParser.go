@@ -61,7 +61,6 @@ var buffer4 = make([]byte,4)
 var buffer8 = make([]byte,8)
 var buffer32 = make([]byte,32)
 var buffer80 = make([]byte,80)
-var buffer4096 = make([]byte,4096)
 
 func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 	fileInfos, err := ioutil.ReadDir(bc.directory)
@@ -73,8 +72,8 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 	start := time.Now()
 	blockCount := 0
 
-	blockOrder := make( []*Block, 0 )
-	blockMap := make( map[[32]byte]*Block )
+	blockOrder := make( []*BlockInfo, 0 )
+	blockMap := make( map[[32]byte]*BlockInfo )
 
 	for index, fileInfo := range fileInfos {
 		fmt.Printf("Opening %s [%d of %d]\n", fileInfo.Name(), index+1, len(fileInfos) )
@@ -89,7 +88,7 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 		nextBlockPosition := int64(0)
 
 		for nextBlockPosition < fileInfo.Size() {
-			blockIndex, err := bc.parseBlockHeader(file)
+			blockIndex, err := bc.parseBlockInfo(file)
 			if blockIndex == nil {
 				break
 			}
@@ -126,9 +125,11 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 
 	// make first block found genesis block
 	// TODO remove
+	/*
 	for i:=0; i<32; i++  {
 		blockOrder[0].PrevHash[i]=0x00
 	}
+	*/
 
 
 	chains := make( []*Chain,0 )
@@ -178,17 +179,25 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 
 	fmt.Printf("found %d possible chains\n", len(chains) )
 
+	if len(chains) == 0 {
+		return nil, errors.New("No chain found")
+	}
+
 	sort.Slice(chains, func(i, j int) bool {
 		return chains[i].Length > chains[j].Length
 	})
+
+	for i:=0; i< len(chains); i++ {
+		chains[i].walkBack()
+	}
 
 	return chains, nil
 
 }
 
-func (bc *BitcoinBlockchainParser) parseBlockHeader( file *os.File ) (*Block, error) {
+func (bc *BitcoinBlockchainParser) parseBlockInfo( file *os.File ) (*BlockInfo, error) {
 
-	block := new(Block)
+	blockInfo := new(BlockInfo)
 	var err error
 	var skipped int
 
@@ -205,15 +214,15 @@ func (bc *BitcoinBlockchainParser) parseBlockHeader( file *os.File ) (*Block, er
 		fmt.Println("Read size")
 		return nil,err
 	}
-	block.Size = binary.LittleEndian.Uint32(buffer4)
-	if block.Size == 0 {
+	blockInfo.Size = binary.LittleEndian.Uint32(buffer4)
+	if blockInfo.Size == 0 {
 		return nil, errors.New("Size is 0")
 	}
 
 	// Header
 	/* Read next 80 bytes which will contain
 		* version (4 bytes)
-        * hash of previous block (32 bytes)
+        * hash of previous blockInfo (32 bytes)
 		* merkle root (32 bytes)
         * time stamp (4 bytes)
 	    * difficulty (4 bytes)
@@ -225,25 +234,19 @@ func (bc *BitcoinBlockchainParser) parseBlockHeader( file *os.File ) (*Block, er
 		return nil,err
 	}
 
-	block.Version = binary.LittleEndian.Uint32(buffer80[0:4])
-	copy(block.PrevHash[:], buffer80[4:36])
 
-	ReverseBytes(block.PrevHash[:])
+	copy(blockInfo.PrevHash[:], buffer80[4:36])
+	ReverseBytes(blockInfo.PrevHash[:])
 
-	copy(block.MerkleRoot[:], buffer80[36:68])
-	block.Timestamp = binary.LittleEndian.Uint32(buffer80[68:72])
-	copy(block.Difficulty[:], buffer80[72:76])
-	block.Nonce = binary.LittleEndian.Uint32(buffer80[76:80])
-
-	// Create block hash from those 80 bytes
+	// Create blockInfo hash from those 80 bytes
 	pass := sha256.Sum256(buffer80)
 	copy( buffer32, pass[:] )
 	pass = sha256.Sum256( buffer32 )
 	copy( buffer32, pass[:] )
 	ReverseBytes(buffer32)
-	copy( block.Hash[:], buffer32 )
+	copy( blockInfo.Hash[:], buffer32 )
 
-	return block,nil
+	return blockInfo,nil
 
 }
 
@@ -257,33 +260,20 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 	// chains is sorted by length
 	longestChain := chains[0]
 
-	block := longestChain.Tip
+	blockInfo := longestChain.Genesis
 
-	// debug ... go back at max 2000 blocks
-	// TODO remove counter
-	counter := 0
-	for !block.isGenesis() {
-		oldBlock := block
-		block = block.PrevBlock
-		block.NextBlock = oldBlock
-		if counter == 1000 {
-			break
-		}
-		counter++
-	}
-
-	// block os now genesis: walk forward and parse blocks
+	// blockInfo os now genesis: walk forward and parse blocks
 	var fileName string
 	var file *os.File
 	blockCount := 0
 	start := time.Now()
 
-	for block.NextBlock != nil {
+	for blockInfo.NextBlock != nil {
 		// read from blk file
 		oldFileName := fileName
 		oldFile := file
 
-		fileName = path.Join( bc.directory, fmt.Sprintf( "blk%.5d.dat", block.BlkFileNumber ) )
+		fileName = path.Join( bc.directory, fmt.Sprintf( "blk%.5d.dat", blockInfo.BlkFileNumber ) )
 
 		if oldFileName != fileName {
 
@@ -298,7 +288,7 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 		}
 
 		// seek to position in file and parse Block from there
-		_, err = file.Seek(block.BlkFilePosition,0)
+		_, err = file.Seek(blockInfo.BlkFilePosition,0)
 		if err != nil {
 			return err
 		}
@@ -320,11 +310,15 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 			}
 		}
 
+		if longestChain.Length-blockCount < 0 {
+			fmt.Println("Something is wrong")
+		}
+
 		if  blockCount != 0 && blockCount%1000 == 0 {
 			elapsed := time.Since(start)
 			nanosPerBlock := elapsed.Nanoseconds()/int64(blockCount)
 			fmt.Printf("Traversing %d blocks took: %s\n", blockCount, elapsed)
-			fmt.Printf("Traversing 1 block took: %s\n", time.Duration(nanosPerBlock))
+			fmt.Printf("Traversing 1 blockInfo took: %s\n", time.Duration(nanosPerBlock))
 			fmt.Printf("Number of blocks visited: %d\n", blockCount)
 			fmt.Printf("Done: %3.2f percent\n", float64(blockCount)*100.0/float64(longestChain.Length) )
 			fmt.Printf("ETA: %s\n", time.Duration( nanosPerBlock*int64(longestChain.Length-blockCount)  ) )
@@ -334,7 +328,7 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 		blockCount++
 
 		// next one
-		block = block.NextBlock
+		blockInfo = blockInfo.NextBlock
 	}
 
 	elapsed := time.Since(start)
@@ -343,7 +337,7 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 	return nil
 }
 
-func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, error) {
+func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block,int, error) {
 
 	block := new(Block)
 	bytesUsed := 0
@@ -380,15 +374,31 @@ func (bc *BitcoinBlockchainParser) parseBlock( file *os.File ) (*Block, int, err
 	    * difficulty (4 bytes)
 		* nonce (4 bytes)
 	*/
-	_, err = file.Seek( 80, 1 )
-
-	// skip header ... was already done in parseBlockHeader
-	if err != nil  {
-		fmt.Println("Skip header")
+	skipped, err = file.Read(buffer80)
+	if err != nil || skipped != 80 {
+		fmt.Println("Read header")
 		return nil,0,err
 	}
-	bytesUsed += 80
-	POSITION_IN_FILE += 80
+	bytesUsed += skipped
+	POSITION_IN_FILE +=skipped
+
+	block.Version = binary.LittleEndian.Uint32(buffer80[0:4])
+	copy(block.PrevHash[:], buffer80[4:36])
+
+	ReverseBytes(block.PrevHash[:])
+
+	copy(block.MerkleRoot[:], buffer80[36:68])
+	block.Timestamp = binary.LittleEndian.Uint32(buffer80[68:72])
+	copy(block.Difficulty[:], buffer80[72:76])
+	block.Nonce = binary.LittleEndian.Uint32(buffer80[76:80])
+
+	// Create block hash from those 80 bytes
+	pass := sha256.Sum256(buffer80)
+	copy( buffer32, pass[:] )
+	pass = sha256.Sum256( buffer32 )
+	copy( buffer32, pass[:] )
+	ReverseBytes(buffer32)
+	copy( block.Hash[:], buffer32 )
 
 	// Transaction count bytes
 	skipped, err = file.Read(buffer1)
@@ -433,7 +443,6 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 	bytesUsed := 0
 	var err error
 	var skipped int
-	var tmpBuffer []byte
 
 	for t:=0; t<transactionCount; t++ {
 		txidData := make([]byte,0)
@@ -567,11 +576,8 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			// Script
 			if scriptLength > 0 {
 
-				if scriptLength > 4096 {
-					tmpBuffer = make( []byte, scriptLength)
-				} else {
-					tmpBuffer = buffer4096[:scriptLength]
-				}
+				tmpBuffer := make( []byte, scriptLength)
+
 
 				skipped, err = file.Read(tmpBuffer)
 				if err != nil || skipped != int(scriptLength) {
@@ -662,7 +668,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 			// Script length
 			skipped, err = file.Read(buffer1)
 			if err != nil || skipped != 1 {
-				fmt.Println("Peek script length")
+				fmt.Println("Read script length")
 				return nil,0,err
 			}
 			bytesUsed += skipped
@@ -689,11 +695,8 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 
 			// Script
 			if scriptLength > 0 {
-				if scriptLength > 4096 {
-					tmpBuffer = make( []byte, scriptLength)
-				} else {
-					tmpBuffer = buffer4096[:scriptLength]
-				}
+				tmpBuffer := make( []byte, scriptLength)
+
 				skipped, err = file.Read(tmpBuffer)
 				if err != nil || skipped != int(scriptLength) {
 					fmt.Println("Read output script", err)
@@ -705,7 +708,7 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				txBaseSize += skipped
 
 				transactions[t].Outputs[o].Script =  NewScript( tmpBuffer )
-
+				transactions[t].Outputs[o].Script.Hex = fmt.Sprintf("%x", transactions[t].Outputs[o].Script.Data )
 				txidData = append( txidData, tmpBuffer... )
 				wtxidData = append( wtxidData, tmpBuffer... )
 			}
@@ -764,18 +767,17 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 
 					wtxidData = append( wtxidData, rawBytes... )
 
-					if witnessItemLength > 4096 {
-						tmpBuffer = make( []byte, witnessItemLength)
-					} else {
-						tmpBuffer = buffer4096[:witnessItemLength]
-					}
+					tmpBuffer := make( []byte, witnessItemLength)
+
 					//skipped64, err := file.Seek(int64(witnessItemLength),1)
+					witnessPosition := POSITION_IN_FILE
 					skipped, err = file.Read(tmpBuffer)
 					if err != nil || skipped != int(witnessItemLength) {
 						fmt.Println("Read witness")
 						return nil,0,err
 					}
 					transactions[t].WitnessItems[w].Data = tmpBuffer
+					transactions[t].WitnessItems[w].BlkFilePosition = witnessPosition
 					bytesUsed += skipped
 					POSITION_IN_FILE +=skipped
 					txSize += skipped

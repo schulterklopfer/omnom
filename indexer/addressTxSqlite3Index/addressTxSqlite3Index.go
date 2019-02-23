@@ -115,9 +115,9 @@ func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBl
 	txCount := len(currentBlock.Transactions)
 	for i:=0; i<txCount; i++ {
 		r, err := indexer.sqlInsertTxStmt.Exec(
-			currentBlock.Transactions[i].TxIdString,
-			currentBlock.Transactions[i].WtxIdString,
-			currentBlock.HashString,
+			currentBlock.Transactions[i].TxIdString(),
+			currentBlock.Transactions[i].WtxIdString(),
+			currentBlock.HashString(),
 			currentBlock.Transactions[i].Locktime,
 			currentBlock.Transactions[i].Size,
 			currentBlock.Transactions[i].VirtualSize,
@@ -128,9 +128,11 @@ func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBl
 			return err
 		}
 
+		/*
 		if currentBlock.Transactions[i].TxIdString()=="a6911033ace9a1ac6f22d472a22df7762a535d3bc751d94aeeab713eebab64d7"  {
 			fmt.Println("found tx");
 		}
+		*/
 
 		indexer.sqlTxId,err=r.LastInsertId()
 
@@ -144,10 +146,12 @@ func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBl
 				continue
 			}
 
+			/*
 			if currentBlock.Transactions[i].TxIdString()=="a6911033ace9a1ac6f22d472a22df7762a535d3bc751d94aeeab713eebab64d7" {
-				fmt.Printf("%x", currentBlock.Transactions[i].Outputs[j].Script.Data)
-
+				fmt.Printf("%x\n", currentBlock.Transactions[i].Outputs[j].Script.Data)
+				fmt.Println( currentBlock.Transactions[i].Outputs[j].Script.Hex)
 			}
+			*/
 			_,targetAddresses,_,_ := txscript.ExtractPkScriptAddrs(currentBlock.Transactions[i].Outputs[j].Script.Data, indexer.chainCfg )
 
 			if targetAddresses != nil && len(targetAddresses) > 0 {

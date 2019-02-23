@@ -17,12 +17,6 @@ type Transaction struct {
 	Outputs []TxOutput
 	WitnessItems []WitnessItem
 	Locktime uint32
-
-	//TxIdString string
-	//WtxIdString string
-	BlkFileIndex int
-	BlkFilePosition int64
-
 }
 
 func (tx *Transaction) WtxIdString() string {
@@ -35,6 +29,8 @@ func (tx *Transaction) TxIdString() string {
 
 type WitnessItem struct {
 	Data []byte
+
+	BlkFilePosition int
 }
 
 type TxInput struct {
@@ -42,10 +38,6 @@ type TxInput struct {
 	OutputIndex uint32
 	Script []byte
 	Sequence uint32
-
-	BlkFileIndex int
-	BlkFilePosition int64
-
 }
 
 func (txi *TxInput) SourceTxHashString() string {
@@ -55,7 +47,4 @@ func (txi *TxInput) SourceTxHashString() string {
 type TxOutput struct {
 	Value uint64
 	Script *Script
-
-	BlkFileIndex int
-	BlkFilePosition int64
 }

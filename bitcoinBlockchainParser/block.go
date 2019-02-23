@@ -2,14 +2,26 @@ package bitcoinBlockchainParser
 
 import "fmt"
 
+type BlockInfo struct {
+	Hash [32]byte
+	Size uint32
+	// Header
+	PrevHash [32]byte
+	PrevBlock *BlockInfo
+	NextBlock *BlockInfo
+
+	BlkFilePosition int64
+	BlkFileNumber uint16
+
+	PartOfChain bool
+}
+
 type Block struct {
 	Hash [32]byte
 	Size uint32
 	// Header
 	Version uint32
 	PrevHash [32]byte
-	PrevBlock *Block
-	NextBlock *Block
 	MerkleRoot [32]byte
 	Timestamp uint32
 	Difficulty [4]byte
@@ -17,26 +29,21 @@ type Block struct {
 
 	//Transactions
 	Transactions []Transaction
-
-	BlkFilePosition int64
-	BlkFileNumber uint
-
-	PartOfChain bool
 }
 
 func (b *Block) HashString() string {
 	return fmt.Sprintf("%x", b.Hash )
 }
 
-func (b *Block) isGenesis() bool {
+func (b *BlockInfo) isGenesis() bool {
 	return !b.hasPrev()
 }
 
-func (b *Block) hasPrev() bool {
+func (b *BlockInfo) hasPrev() bool {
 	return !allZero(b.PrevHash)
 }
 
-func (b *Block) isPrevTo( block *Block ) bool {
+func (b *BlockInfo) isPrevTo( block *Block ) bool {
 	if b == nil || block == nil {
 		return false
 	}
@@ -48,7 +55,7 @@ func (b *Block) isPrevTo( block *Block ) bool {
 	return true
 }
 
-func (b *Block) isEqualTo( block *Block ) bool {
+func (b *BlockInfo) isEqualTo( block *Block ) bool {
 	if b == nil || block == nil {
 		return false
 	}

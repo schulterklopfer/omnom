@@ -152,7 +152,7 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 		nextBlockId = indexer.sqlBlockId+2
 	}
 
-	r, err := indexer.sqlInsertBlockStmt.Exec( currentBlock.HashString, indexer.sqlBlockId, nextBlockId, currentBlock.Version, currentBlock.Timestamp )
+	r, err := indexer.sqlInsertBlockStmt.Exec( currentBlock.HashString(), indexer.sqlBlockId, nextBlockId, currentBlock.Version, currentBlock.Timestamp )
 	if err != nil {
 		return err
 	}
@@ -163,9 +163,9 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 	txCount := len(currentBlock.Transactions)
 	for i:=0; i<txCount; i++ {
 		r, err := indexer.sqlInsertTxStmt.Exec(
-			currentBlock.Transactions[i].TxIdString,
+			currentBlock.Transactions[i].TxIdString(),
 			indexer.sqlBlockId,
-			currentBlock.Transactions[i].WtxIdString,
+			currentBlock.Transactions[i].WtxIdString(),
 			currentBlock.Transactions[i].Locktime,
 			currentBlock.Transactions[i].Size,
 			currentBlock.Transactions[i].VirtualSize,
@@ -187,7 +187,7 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 			var outputId int
 			var outputAmount int64
 			var addressId int
-			err := indexer.sqlSelectOutputStmt.QueryRow( txIn.SourceTxHashString, txIn.OutputIndex ).
+			err := indexer.sqlSelectOutputStmt.QueryRow( txIn.SourceTxHashString(), txIn.OutputIndex ).
 				Scan(&outputId, &outputAmount, &addressId )
 			if err == nil {
 				return err
