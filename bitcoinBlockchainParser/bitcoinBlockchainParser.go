@@ -125,11 +125,13 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 
 	// make first block found genesis block
 	// TODO remove
+
 	/*
 	for i:=0; i<32; i++  {
 		blockOrder[0].PrevHash[i]=0x00
 	}
 	*/
+
 
 
 	chains := make( []*Chain,0 )
@@ -708,7 +710,6 @@ func parseTransactions( file *os.File, transactionCount int ) ([]Transaction,int
 				txBaseSize += skipped
 
 				transactions[t].Outputs[o].Script =  NewScript( tmpBuffer )
-				transactions[t].Outputs[o].Script.Hex = fmt.Sprintf("%x", transactions[t].Outputs[o].Script.Data )
 				txidData = append( txidData, tmpBuffer... )
 				wtxidData = append( wtxidData, tmpBuffer... )
 			}

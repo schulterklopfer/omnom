@@ -18,7 +18,7 @@ zmqpubrawtx=tcp://0.0.0.0:18502
 	"github.com/btcsuite/btcd/txscript"
 	"omnom/bitcoinBlockchainParser"
 	"omnom/indexer"
-	"omnom/indexer/addressTxSqlite3Index"
+	"omnom/indexer/addressTxRocksDBIndex"
 	"path"
 )
 
@@ -43,7 +43,8 @@ func main() {
 
 
 	var idx indexer.Indexer
-	idx = addressTxSqlite3Index.NewAddressTxSqlite3Index(&chaincfg.TestNet3Params)
+	idx = addressTxRocksDBIndex.NewAddressTxRocksDBIndex(&chaincfg.TestNet3Params)
+	//idx = addressTxSqlite3Index.NewAddressTxSqlite3Index(&chaincfg.TestNet3Params)
 
 	//idx = fullSqlite3Index.NewFullSqlite3Index(&chaincfg.TestNet3Params)
 	err = idx.OnStart()
