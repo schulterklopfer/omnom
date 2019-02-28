@@ -30,6 +30,9 @@ type FullSqlite3Index struct {
 	sqlTxId int64
 	sqlAddressId int64
 	chainCfg *chaincfg.Params
+
+	dbName string
+
 }
 
 func NewFullSqlite3Index( chainCfg *chaincfg.Params) *FullSqlite3Index {
@@ -38,13 +41,17 @@ func NewFullSqlite3Index( chainCfg *chaincfg.Params) *FullSqlite3Index {
 	return index
 }
 
+func ( indexer *FullSqlite3Index ) DBName() string {
+	return indexer.dbName
+}
+
 func ( indexer *FullSqlite3Index) OnStart() error {
 
-	fileName := fmt.Sprintf("fullIndex-%d.sqlite", time.Now().Unix() )
+	indexer.dbName = fmt.Sprintf("fullIndex-%d.sqlite", time.Now().Unix() )
 
 
 	var err error
-	indexer.db, err = sql.Open("sqlite3", "file:"+fileName )
+	indexer.db, err = sql.Open("sqlite3", "file:"+indexer.dbName )
 	if err != nil {
 		return err
 	}

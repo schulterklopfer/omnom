@@ -22,16 +22,23 @@ type AddressTxRocksDBIndex struct {
 	cfHandles []*gorocksdb.ColumnFamilyHandle
 	cfOptions []*gorocksdb.Options
 	chainCfg *chaincfg.Params
+
+	reverseIndex bool
+
+	dbName string
 }
 
 func NewAddressTxRocksDBIndex( chainCfg *chaincfg.Params) *AddressTxRocksDBIndex {
 	indexer := new(AddressTxRocksDBIndex)
+	indexer.reverseIndex = false
 	indexer.options =  gorocksdb.NewDefaultOptions()
 	indexer.options.SetCreateIfMissing(true)
 	indexer.options.SetErrorIfExists(true)
 	indexer.options.SetCreateIfMissingColumnFamilies(true)
 	indexer.readOptions = gorocksdb.NewDefaultReadOptions()
 	indexer.writeOptions = gorocksdb.NewDefaultWriteOptions()
+	indexer.writeOptions.DisableWAL(true)
+	indexer.writeOptions.SetSync(false)
 	indexer.chainCfg = chainCfg
 	indexer.cfNames = []string{"default","address","transaction"}
 	indexer.cfOptions = []*gorocksdb.Options{indexer.options, indexer.options, indexer.options}
@@ -42,19 +49,21 @@ func ( indexer *AddressTxRocksDBIndex) OnStart() error {
 
 	var err error
 
-	dbName := fmt.Sprintf("txAddress-%d", time.Now().Unix() )
+	indexer.dbName = fmt.Sprintf("txAddress-%d", time.Now().Unix() )
 
-	db, cfHandles, err := gorocksdb.OpenDbColumnFamilies( indexer.options, dbName, indexer.cfNames, indexer.cfOptions )
-
-	indexer.db = db
-	indexer.cfHandles = cfHandles
-
+	db, cfHandles, err := gorocksdb.OpenDbColumnFamilies( indexer.options, indexer.dbName, indexer.cfNames, indexer.cfOptions )
 	if err != nil {
 		return err
 	}
 
+	indexer.db = db
+	indexer.cfHandles = cfHandles
 
 	return nil
+}
+
+func ( indexer *AddressTxRocksDBIndex) DBName() string {
+	return indexer.dbName
 }
 
 func ( indexer *AddressTxRocksDBIndex) OnEnd() error {
@@ -64,6 +73,11 @@ func ( indexer *AddressTxRocksDBIndex) OnEnd() error {
 	}
 
 	indexer.db.Close()
+
+	indexer.options.Destroy()
+	indexer.readOptions.Destroy()
+	indexer.writeOptions.Destroy()
+
 	return nil
 
 }
@@ -84,7 +98,6 @@ func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBl
 	// anaylse current block
 
 	// insert block into db
-
 	txCount := len(currentBlock.Transactions)
 	for i:=0; i<txCount; i++ {
 
@@ -104,46 +117,45 @@ func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBl
 			if targetAddresses != nil && len(targetAddresses) > 0 {
 				for k:=0; k< len(targetAddresses); k++ {
 					addressBytes := []byte(targetAddresses[k].EncodeAddress())
-					addressBytesArray = append( addressBytesArray, addressBytes )
-					/*
+					if indexer.reverseIndex {
+						addressBytesArray = append(addressBytesArray, addressBytes)
+					}
+
 					txs, err := indexer.db.GetCF( indexer.readOptions, indexer.cfHandles[1], addressBytes )
 					if err != nil {
 						return err
 					}
+
 					var newData []byte
-					if txs.Size() > 0 {
-						newData = append( txs.Data(), currentBlock.Transactions[i].TxId[:]... )
+
+					if txs.Size() > 0  {
+						newData := make( []byte, txs.Size()+32 )
+						copy(newData[0:txs.Size()],txs.Data())
+						copy(newData[txs.Size():txs.Size()+32], currentBlock.Transactions[i].TxId[0:32] )
 					} else {
-						newData = currentBlock.Transactions[i].TxId[:]
+						newData = currentBlock.Transactions[i].TxId[0:32]
 					}
+
+					txs.Free()
+
 					err = indexer.db.PutCF( indexer.writeOptions, indexer.cfHandles[1], addressBytes, newData )
 					if err != nil {
 						return err
 					}
-					*/
 				}
-
 			}
-
 		}
-		if len(addressBytesArray) > 0 {
-			txKey := currentBlock.Transactions[i].TxId[:]
-			err := indexer.db.PutCF( indexer.writeOptions, indexer.cfHandles[2], txKey, pack(addressBytesArray) )
-			if err != nil {
-				return err
+		if indexer.reverseIndex {
+			if len(addressBytesArray) > 0 {
+				txKey := currentBlock.Transactions[i].TxId[:]
+				err := indexer.db.PutCF( indexer.writeOptions, indexer.cfHandles[2], txKey, pack(addressBytesArray) )
+				if err != nil {
+					return err
+				}
 			}
 		}
 
 	}
-
-	/*
-	flushOptions := gorocksdb.NewDefaultFlushOptions()
-	err := indexer.db.Flush( flushOptions )
-
-	if err != nil {
-		return err
-	}
-	*/
 
 	return nil
 }
