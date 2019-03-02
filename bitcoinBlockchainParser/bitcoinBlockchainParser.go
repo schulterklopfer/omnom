@@ -18,14 +18,29 @@ import (
 type BitcoinBlockchainParser struct {
 	// private
 	directory string
+	onBlockInfo OnBlockInfoCallback
 	onBlock OnBlockCallback
 }
 
+type BitcoinBlockchainParserOptions struct {
+	// private
+	CallBlockInfoCallback bool
+	CallBlockCallback     bool
+}
+
+type OnBlockInfoCallback func( int, int, *BlockInfo ) error
 type OnBlockCallback func( int, int, *Block ) error
 
 
-func NewBitcoinBlockchainParser( directory string,  onBlock OnBlockCallback ) *BitcoinBlockchainParser {
-	return &BitcoinBlockchainParser{directory, onBlock }
+func NewBitcoinBlockchainParser( directory string, onBlockInfo OnBlockInfoCallback, onBlock OnBlockCallback ) *BitcoinBlockchainParser {
+	return &BitcoinBlockchainParser{directory, onBlockInfo,onBlock }
+}
+
+func NewBitcoinBlockchainParserDefaultOptions() *BitcoinBlockchainParserOptions {
+	o := new( BitcoinBlockchainParserOptions )
+	o.CallBlockCallback = true
+	o.CallBlockInfoCallback = true
+	return o
 }
 
 func allZero( hash [32]byte ) bool {
@@ -35,10 +50,6 @@ func allZero( hash [32]byte ) bool {
 		}
 	}
 	return true
-}
-
-func (bc *BitcoinBlockchainParser ) Close() {
-
 }
 
 func filterBlockDataFiles(fileInfos []os.FileInfo) (ret []os.FileInfo) {
@@ -62,7 +73,7 @@ var buffer8 = make([]byte,8)
 var buffer32 = make([]byte,32)
 var buffer80 = make([]byte,80)
 
-func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
+func (bc *BitcoinBlockchainParser ) FindChains() ([]*Chain, error) {
 	fileInfos, err := ioutil.ReadDir(bc.directory)
 	if err != nil {
 		return nil, err
@@ -94,7 +105,7 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 			}
 
 			fmt.Sscanf( fileInfo.Name(), "blk%d.dat", &blockIndex.BlkFileNumber )
-			blockIndex.BlkFilePosition = nextBlockPosition
+			blockIndex.BlkFilePosition = int32(nextBlockPosition)
 
 			blockOrder = append(blockOrder, blockIndex )
 			blockMap[blockIndex.Hash] = blockIndex
@@ -147,7 +158,7 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 		}
 
 		count := 0
-		for !currentBlock.isGenesis() {
+		for !currentBlock.IsGenesis() {
 			oldBlock := currentBlock
 			currentBlock = blockMap[currentBlock.PrevHash]
 			if currentBlock == nil {
@@ -169,7 +180,7 @@ func (bc *BitcoinBlockchainParser ) findChains() ([]*Chain, error) {
 			bi := chain.Tip
 			bi.PartOfChain = true
 
-			for !bi.isGenesis() {
+			for !bi.IsGenesis() {
 				bi = bi.PrevBlock
 				bi.PartOfChain = true
 			}
@@ -252,11 +263,11 @@ func (bc *BitcoinBlockchainParser) parseBlockInfo( file *os.File ) (*BlockInfo, 
 
 }
 
-func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
+func (bc *BitcoinBlockchainParser ) ParseBlocks( options *BitcoinBlockchainParserOptions ) error {
 
-	chains, err := bc.findChains()
+	chains, err := bc.FindChains()
 	if err != nil {
-		return err
+		fmt.Println(err)
 	}
 
 	// chains is sorted by length
@@ -270,45 +281,58 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 	blockCount := 0
 	start := time.Now()
 
-	for blockInfo.NextBlock != nil {
+	for blockInfo != nil {
 		// read from blk file
-		oldFileName := fileName
-		oldFile := file
 
-		fileName = path.Join( bc.directory, fmt.Sprintf( "blk%.5d.dat", blockInfo.BlkFileNumber ) )
-
-		if oldFileName != fileName {
-
-			if oldFile != nil {
-				oldFile.Close()
-			}
-
-			file, err = os.Open( fileName )
-			if err != nil {
-				return err
+		if options.CallBlockInfoCallback {
+			if bc.onBlock != nil {
+				err = bc.onBlockInfo(blockCount, longestChain.Length, blockInfo)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
-		// seek to position in file and parse Block from there
-		_, err = file.Seek(blockInfo.BlkFilePosition,0)
-		if err != nil {
-			return err
-		}
-		block, bytesUsed, err := bc.parseBlock(file)
-		if err != nil {
-			return err
-		}
-		if block == nil {
-			break
-		}
-		if int(block.Size) != bytesUsed-8 {
-			return errors.New("Data mismatch")
-		}
+		if options.CallBlockCallback {
+			oldFileName := fileName
+			oldFile := file
 
-		if bc.onBlock != nil {
-			err = bc.onBlock( blockCount, longestChain.Length, block )
+			fileName = path.Join(bc.directory, fmt.Sprintf("blk%.5d.dat", blockInfo.BlkFileNumber))
+
+			if oldFileName != fileName {
+
+				if oldFile != nil {
+					oldFile.Close()
+				}
+
+				file, err = os.Open(fileName)
+				if err != nil {
+					return err
+				}
+			}
+
+			// seek to position in file and parse Block from there
+			_, err = file.Seek(int64(blockInfo.BlkFilePosition), 0)
 			if err != nil {
 				return err
+			}
+			block, bytesUsed, err := bc.parseBlock(file)
+			if err != nil {
+				return err
+			}
+			if block == nil {
+				break
+			}
+			if int(block.Size) != bytesUsed-8 {
+				return errors.New("Data mismatch")
+			}
+
+			if bc.onBlock != nil {
+
+				err = bc.onBlock(blockCount, longestChain.Length, block)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -328,7 +352,6 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks() error {
 
 		}
 		blockCount++
-
 		// next one
 		blockInfo = blockInfo.NextBlock
 	}

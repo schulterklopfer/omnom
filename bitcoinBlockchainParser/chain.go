@@ -10,7 +10,7 @@ type Chain struct {
 
 func (c *Chain) walkBack() {
 	block := c.Tip
-	for !block.isGenesis() {
+	for !block.IsGenesis() {
 		oldBlock := block
 		block = block.PrevBlock
 		block.NextBlock = oldBlock

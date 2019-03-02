@@ -14,6 +14,7 @@ zmqpubrawtx=tcp://0.0.0.0:18502
  */import (
 	"fmt"
 	"github.com/btcsuite/btcd/chaincfg"
+	"log"
 	"omnom/bitcoinBlockchainParser"
 	"omnom/indexer"
 	"omnom/indexer/addressTxRocksDBIndex"
@@ -24,22 +25,43 @@ func main() {
 
 	var idx indexer.Indexer
 	idx = addressTxRocksDBIndex.NewAddressTxRocksDBIndex(&chaincfg.TestNet3Params)
-	//idx = addressTxSqlite3Index.NewAddressTxSqlite3Index(&chaincfg.TestNet3Params)
-
-	//idx = fullSqlite3Index.NewFullSqlite3Index(&chaincfg.TestNet3Params)
-	err := idx.OnStart()
+	existing, err := idx.OnStart()
 
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	bp := bitcoinBlockchainParser.NewBitcoinBlockchainParser(path.Join("testnet3", "blocks"), idx.OnBlock )
-	err = bp.ParseBlocks()
-	if err != nil {
-		fmt.Println(err)
+	bp := bitcoinBlockchainParser.NewBitcoinBlockchainParser(path.Join("testnet3", "blocks"), idx.OnBlockInfo, idx.OnBlock )
+
+	if !existing {
+		// parse historic data
+		log.Println( "Starting to build index" )
+		opts := bitcoinBlockchainParser.NewBitcoinBlockchainParserDefaultOptions()
+		err = bp.ParseBlocks(opts)
+
+		if err != nil {
+			fmt.Println(err)
+		}
+	} else {
+		log.Println( "Found index..." )
+		log.Println( "Checking index consistency..." )
+
+		// walk back index blockInfo to genesis block
+		chains, err := bp.FindChains()
+
+		if err != nil || len(chains) == 0 {
+			log.Fatal( "No chains found in local blockchain data" )
+		}
+		longestChain := chains[0]
+
+		err = idx.CheckBlockInfoEntries( longestChain )
+
+		if err != nil {
+			log.Fatalf( "Error in checking index consistency: %s", err )
+		}
 	}
-	bp.Close()
+
 
 	idx.OnEnd()
 

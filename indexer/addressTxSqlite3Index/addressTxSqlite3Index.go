@@ -39,7 +39,7 @@ func ( indexer *AddressTxSqlite3Index ) DBName() string {
 	return indexer.dbName
 }
 
-func ( indexer *AddressTxSqlite3Index) OnStart() error {
+func ( indexer *AddressTxSqlite3Index) OnStart() (bool,error)  {
 
 	indexer.dbName = fmt.Sprintf("fullIndex-%d.sqlite", time.Now().Unix() )
 
@@ -47,35 +47,35 @@ func ( indexer *AddressTxSqlite3Index) OnStart() error {
 	var err error
 	indexer.db, err = sql.Open("sqlite3", "file:"+indexer.dbName )
 	if err != nil {
-		return err
+		return false,err
 	}
 
 	// do onStart statements here
 	_,err = indexer.db.Exec(SQLOnStart)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlTx,err = indexer.db.Begin()
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlInsertTxAddressStmt, err = indexer.sqlTx.Prepare(SQLInsertTxAddress)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlInsertAddressStmt, err = indexer.sqlTx.Prepare(SQLInsertAddress)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlSelectAddressStmt, err = indexer.sqlTx.Prepare(SQLSelectAddress)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlInsertTxStmt, err = indexer.sqlTx.Prepare(SQLInsertTx)
 	if err != nil {
-		return err
+		return false,err
 	}
-	return nil
+	return true,nil
 }
 
 func ( indexer *AddressTxSqlite3Index) OnEnd() error {
@@ -113,6 +113,10 @@ func ( indexer *AddressTxSqlite3Index) OnEnd() error {
 
 	return nil
 
+}
+
+func ( indexer *AddressTxSqlite3Index) OnBlockInfo( height int, total int, blockInfo *bitcoinBlockchainParser.BlockInfo ) error {
+	return nil
 }
 
 func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBlock *bitcoinBlockchainParser.Block ) error {
@@ -190,3 +194,6 @@ func ( indexer *AddressTxSqlite3Index) OnBlock( height int, total int, currentBl
 	}
 	return nil
 }
+
+func ( indexer *AddressTxSqlite3Index) ShouldParseBlockInfo() bool { return true }
+func ( indexer *AddressTxSqlite3Index) ShouldParseBlockBody() bool { return true }

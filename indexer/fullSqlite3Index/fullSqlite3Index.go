@@ -45,7 +45,7 @@ func ( indexer *FullSqlite3Index ) DBName() string {
 	return indexer.dbName
 }
 
-func ( indexer *FullSqlite3Index) OnStart() error {
+func ( indexer *FullSqlite3Index) OnStart() (bool,error) {
 
 	indexer.dbName = fmt.Sprintf("fullIndex-%d.sqlite", time.Now().Unix() )
 
@@ -53,51 +53,51 @@ func ( indexer *FullSqlite3Index) OnStart() error {
 	var err error
 	indexer.db, err = sql.Open("sqlite3", "file:"+indexer.dbName )
 	if err != nil {
-		return err
+		return false,err
 	}
 
 	// do onStart statements here
 	_,err = indexer.db.Exec(SQLOnStart)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlTx,err = indexer.db.Begin()
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlInsertBlockStmt, err = indexer.sqlTx.Prepare(SQLInsertBlock)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlUpdateAddressBalanceStmt, err = indexer.sqlTx.Prepare(SQLUpdateAddressBalance)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlUpsertAddress, err = indexer.sqlTx.Prepare(SQLUpsertAddress)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlInsertTxStmt, err = indexer.sqlTx.Prepare(SQLInsertTx)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlUpdateTxFeeAmountStmt, err = indexer.sqlTx.Prepare(SQLUpdateTxFeeAmount)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlInsertInputStmt, err = indexer.sqlTx.Prepare(SQLInsertInput)
 	if err != nil {
-		return err
+		return false,err
 	}
 	indexer.sqlInsertOutputStmt, err = indexer.sqlTx.Prepare(SQLInsertOutput)
 	if err != nil {
-		return err
+		return false, err
 	}
 	indexer.sqlSelectOutputStmt, err = indexer.sqlTx.Prepare(SQLSelectOutput)
 	if err != nil {
-		return err
+		return false,err
 	}
-	return nil
+	return true,nil
 }
 
 func ( indexer *FullSqlite3Index) OnEnd() error {
@@ -146,6 +146,10 @@ func ( indexer *FullSqlite3Index) OnEnd() error {
 
 	return nil
 
+}
+
+func ( indexer *FullSqlite3Index) OnBlockInfo( height int, total int, blockInfo *bitcoinBlockchainParser.BlockInfo ) error {
+	return nil
 }
 
 func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *bitcoinBlockchainParser.Block ) error {
@@ -255,3 +259,6 @@ func ( indexer *FullSqlite3Index) OnBlock( height int, total int, currentBlock *
 	}
 	return nil
 }
+
+func ( indexer *FullSqlite3Index) ShouldParseBlockInfo() bool { return true }
+func ( indexer *FullSqlite3Index) ShouldParseBlockBody() bool { return true }
