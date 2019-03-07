@@ -1,19 +1,20 @@
 package bitcoinBlockchainParser
 
+import "bytes"
 
 type Chain struct {
-	Index int
-	Tip *BlockInfo
-	Genesis *BlockInfo
+	Index  int
+	First  *BlockInfo
+	Last   *BlockInfo
 	Length int
 }
 
-func (c *Chain) walkBack() {
-	block := c.Tip
-	for !block.IsGenesis() {
+func (c *Chain) walkBack( stopAtHash [32]byte ) {
+	block := c.Last
+	for !bytes.Equal( block.Hash[0:32], stopAtHash[0:32]) {
 		oldBlock := block
-		block = block.PrevBlock
-		block.NextBlock = oldBlock
+		block = block.PrevBlockInfo
+		block.NextBlockInfo = oldBlock
 	}
-	c.Genesis = block
+	c.First = block
 }

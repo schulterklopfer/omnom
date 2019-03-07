@@ -1,13 +1,16 @@
 package addressTxRocksDBIndex
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/pkg/errors"
 	"github.com/tecbot/gorocksdb"
+	"log"
 	"omnom/bitcoinBlockchainParser"
+	"omnom/indexer"
 )
 
 type AddressTxRocksDBIndex struct {
@@ -24,26 +27,28 @@ type AddressTxRocksDBIndex struct {
 	chainCfg *chaincfg.Params
 
 	blockInfoIndex bool
-	transactionIndex bool
 	addressIndex bool
-	blockIndex bool
+	reorgCacheSize int
 
 	dbName string
 
 	genesisBlockHash [32]byte
 	tipBlockHash [32]byte
 	blockCount uint64
+
+	indexSearch *AddressTxRocksDBIndexSearch
 }
 
 func NewAddressTxRocksDBIndex( chainCfg *chaincfg.Params) *AddressTxRocksDBIndex {
 	indexer := new(AddressTxRocksDBIndex)
 
 	indexer.blockInfoIndex = true
-	indexer.transactionIndex = true
 	indexer.addressIndex = true
-	indexer.blockIndex = true
+
+	indexer.reorgCacheSize = 10 // blocks
 
 	indexer.options = gorocksdb.NewDefaultOptions()
+	indexer.options.EnableStatistics()
 	indexer.options.SetCreateIfMissing(true)
 	indexer.options.SetErrorIfExists(false)
 	indexer.options.SetCreateIfMissingColumnFamilies(true)
@@ -70,6 +75,7 @@ func ( indexer *AddressTxRocksDBIndex) OnStart() (bool,error) {
 
 	indexer.db = db
 	indexer.cfHandles = cfHandles
+	indexer.indexSearch = NewIndexSearch(indexer.db, indexer.readOptions, indexer.cfHandles)
 
 	//check if we have properties stored which tell us
 	//that some index is already built
@@ -104,7 +110,7 @@ func ( indexer *AddressTxRocksDBIndex) OnStart() (bool,error) {
 	}
 
 	if txs.Size() == 8  {
-		binary.LittleEndian.Uint64(txs.Data())
+		indexer.blockCount = binary.LittleEndian.Uint64(txs.Data())
 	} else {
 		existing = false
 	}
@@ -115,6 +121,10 @@ func ( indexer *AddressTxRocksDBIndex) OnStart() (bool,error) {
 
 func ( indexer *AddressTxRocksDBIndex) DBName() string {
 	return indexer.dbName
+}
+
+func ( indexer *AddressTxRocksDBIndex) DB() interface{} {
+	return indexer.db
 }
 
 func ( indexer *AddressTxRocksDBIndex) OnEnd() error {
@@ -182,7 +192,7 @@ func ( indexer *AddressTxRocksDBIndex) OnBlockInfo( height int, total int, block
 			}
 		}
 
-		if height == total {
+		if height == total-1 {
 			bytes := make( []byte,8)
 			binary.LittleEndian.PutUint64(bytes,uint64(total))
 			err := indexer.db.PutCF( indexer.writeOptions, indexer.cfHandles[0], []byte("blockCount"), bytes )
@@ -198,13 +208,13 @@ func ( indexer *AddressTxRocksDBIndex) OnBlockInfo( height int, total int, block
 
 func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBlock *bitcoinBlockchainParser.Block ) error {
 
-	if indexer.addressIndex || indexer.transactionIndex || indexer.blockIndex {
+	if indexer.addressIndex {
 		// insert block into db
 		txCount := len(currentBlock.Transactions)
 		blockTransactionMap := make( map[[32]byte]bool, 0 )
 
 		for i:=0; i<txCount; i++ {
-			if indexer.blockIndex {
+			if height > total-indexer.reorgCacheSize  {
 				blockTransactionMap[currentBlock.Transactions[i].TxId]=true
 			}
 			txOutCount:=len(currentBlock.Transactions[i].Outputs)
@@ -212,7 +222,7 @@ func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBl
 
 			// todo: check inputs for "source addies" and add 1 or many flags bytes to mark if address/tx is from input or output
 			// also add varint for number of addies/tx
-			if indexer.addressIndex || indexer.transactionIndex {
+			if indexer.addressIndex {
 				for j:=0; j<txOutCount; j++ {
 
 					if currentBlock.Transactions[i].Outputs[j].Script == nil ||
@@ -226,7 +236,7 @@ func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBl
 					if targetAddresses != nil && len(targetAddresses) > 0 {
 						for k:=0; k< len(targetAddresses); k++ {
 							address := targetAddresses[k].EncodeAddress()
-							if indexer.transactionIndex {
+							if height >= total-indexer.reorgCacheSize  {
 								transactionAddressMap[address]=true
 							}
 
@@ -257,7 +267,7 @@ func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBl
 					}
 				}
 			}
-			if indexer.transactionIndex {
+			if height >= total-indexer.reorgCacheSize  {
 				addressBytesArray := make([][]byte,0)
 				for k := range transactionAddressMap {
 					addressBytesArray = append(addressBytesArray, []byte(k))
@@ -269,7 +279,7 @@ func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBl
 				}
 			}
 
-			if indexer.blockIndex {
+			if height >= total-indexer.reorgCacheSize {
 				txCount := len(blockTransactionMap)
 				transactionsBytes := make([]byte,txCount*32)
 				index := 0
@@ -285,8 +295,6 @@ func ( indexer *AddressTxRocksDBIndex) OnBlock( height int, total int, currentBl
 
 		}
 	}
-
-
 	return nil
 }
 
@@ -295,9 +303,92 @@ func ( indexer *AddressTxRocksDBIndex) ShouldParseBlockInfo() bool {
 }
 
 func ( indexer *AddressTxRocksDBIndex) ShouldParseBlockBody() bool {
-	return indexer.transactionIndex || indexer.addressIndex
+	return indexer.addressIndex
+}
+
+func ( indexer *AddressTxRocksDBIndex ) GetGenesisBlockInfo() (*bitcoinBlockchainParser.BlockInfo, error) {
+	return indexer.indexSearch.FindBlockInfoByBlockHash( indexer.genesisBlockHash[0:32] )
+}
+
+func ( indexer *AddressTxRocksDBIndex ) GetTipBlockInfo() (*bitcoinBlockchainParser.BlockInfo, error) {
+	return indexer.indexSearch.FindBlockInfoByBlockHash( indexer.tipBlockHash[0:32] )
+}
+
+func ( indexer *AddressTxRocksDBIndex ) GetBlockCount() uint64 {
+	return indexer.blockCount
+}
+
+func ( indexer *AddressTxRocksDBIndex ) IndexSearch() indexer.IndexSearch {
+	return indexer.indexSearch
 }
 
 func ( indexer *AddressTxRocksDBIndex) CheckBlockInfoEntries( longestChain *bitcoinBlockchainParser.Chain ) error {
+	if !bytes.Equal( longestChain.Last.Hash[0:32], indexer.genesisBlockHash[0:32] ) {
+		return errors.New("Last block mismatch")
+	}
+	if bytes.Equal( longestChain.First.Hash[0:32], indexer.tipBlockHash[0:32] ) {
+		// genesis block and tip are the same:
+		// walk through chain and check if it matches the data
+		// in the index
+		block := longestChain.First
+		log.Println("Last block and tip are the same. Comparing data")
+		for !block.IsGenesis() {
+			bi, err := indexer.indexSearch.FindBlockInfoByBlockHash( block.Hash[0:32] )
+
+			if err != nil {
+				return nil
+			}
+
+			if !bytes.Equal( block.Hash[0:32], bi.Hash[0:32] ) ||
+				!bytes.Equal( block.PrevHash[0:32], bi.PrevHash[0:32] ) {
+				return errors.New("Chain in index doesn't match chain on disk" )
+			}
+
+			block = block.PrevBlockInfo
+		}
+		log.Println("Looks good to me.")
+
+	} else {
+		// analyse who is ahead
+	}
 	return nil
+}
+
+func ( indexer *AddressTxRocksDBIndex) CleanupReorgCache( longestChain *bitcoinBlockchainParser.Chain ) error {
+	if !bytes.Equal( longestChain.First.Hash[0:32], indexer.tipBlockHash[0:32] ) {
+		return errors.New("Chain tip mismatch")
+	}
+	blockInfo := longestChain.First
+	log.Println("Cleaning up reorg cache")
+	counter := 0
+	for !blockInfo.IsGenesis() {
+		if counter > indexer.reorgCacheSize {
+			// remove stuff here
+			txids, err := indexer.indexSearch.FindTransactionIdsByBlockHash( blockInfo.Hash[0:32] )
+			if err == nil && txids == nil {
+				// assume everything b4 was also deleted and break
+				break
+			}
+
+			if txids != nil {
+				for t := 0; t < len(txids); t++ {
+					err = indexer.db.DeleteCF( indexer.writeOptions, indexer.cfHandles[2], txids[t][0:32] )
+					if err != nil {
+						log.Printf("Error when deleting txid %x: %s", txids[t][0:32], err )
+					}
+				}
+			}
+
+			err = indexer.db.DeleteCF( indexer.writeOptions, indexer.cfHandles[3], blockInfo.Hash[0:32] )
+			if err != nil {
+				log.Printf("Error when deleting blockInfo %x: %s", blockInfo.Hash[0:32], err )
+			}
+
+		}
+		blockInfo = blockInfo.PrevBlockInfo
+		counter++
+	}
+
+	return nil
+
 }

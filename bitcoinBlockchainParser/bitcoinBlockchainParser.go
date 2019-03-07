@@ -1,6 +1,7 @@
 package bitcoinBlockchainParser
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -26,6 +27,10 @@ type BitcoinBlockchainParserOptions struct {
 	// private
 	CallBlockInfoCallback bool
 	CallBlockCallback     bool
+	StopAtHash            [32]byte
+	BlkFilePosition 	  int32
+	BlkFileNumber 	      uint16
+	StartBlockHeight	  uint64
 }
 
 type OnBlockInfoCallback func( int, int, *BlockInfo ) error
@@ -73,76 +78,109 @@ var buffer8 = make([]byte,8)
 var buffer32 = make([]byte,32)
 var buffer80 = make([]byte,80)
 
-func (bc *BitcoinBlockchainParser ) FindChains() ([]*Chain, error) {
+func (bc *BitcoinBlockchainParser ) CollectBlockInfo( options *BitcoinBlockchainParserOptions ) (map[[32]byte]*BlockInfo, []*BlockInfo, error) {
 	fileInfos, err := ioutil.ReadDir(bc.directory)
 	if err != nil {
-		return nil, err
+		return nil,nil, err
 	}
 
 	fileInfos = filterBlockDataFiles(fileInfos)
 	start := time.Now()
-	blockCount := 0
+	blockHeight := options.StartBlockHeight
 
-	blockOrder := make( []*BlockInfo, 0 )
-	blockMap := make( map[[32]byte]*BlockInfo )
+	blockOrder := make([]*BlockInfo, 0)
+	blockMap := make(map[[32]byte]*BlockInfo)
+
+	startPositionInFile := options.BlkFilePosition
 
 	for index, fileInfo := range fileInfos {
-		fmt.Printf("Opening %s [%d of %d]\n", fileInfo.Name(), index+1, len(fileInfos) )
+		var blkFileNumber uint16
+		fmt.Sscanf(fileInfo.Name(), "blk%d.dat", &blkFileNumber)
+
+		if blkFileNumber < options.BlkFileNumber {
+			continue
+		}
+
+		fmt.Printf("Opening %s [%d of %d]\n", fileInfo.Name(), index+1, len(fileInfos))
 
 		// Open readonly
-		file, err := os.Open( path.Join(bc.directory, fileInfo.Name()))
+		file, err := os.Open(path.Join(bc.directory, fileInfo.Name()))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		POSITION_IN_FILE = 0
+		POSITION_IN_FILE = int(startPositionInFile)
 		//fmt.Println(err, reader.Size(), fileInfo.Size() )
-		nextBlockPosition := int64(0)
-
+		nextBlockPosition := int64(POSITION_IN_FILE)
+		_, err = file.Seek(nextBlockPosition, 0)
+		if err != nil {
+			return nil, nil, err
+		}
 		for nextBlockPosition < fileInfo.Size() {
 			blockIndex, err := bc.parseBlockInfo(file)
 			if blockIndex == nil {
 				break
 			}
 
-			fmt.Sscanf( fileInfo.Name(), "blk%d.dat", &blockIndex.BlkFileNumber )
+			blockIndex.BlkFileNumber = blkFileNumber
 			blockIndex.BlkFilePosition = int32(nextBlockPosition)
 
-			blockOrder = append(blockOrder, blockIndex )
+			blockOrder = append(blockOrder, blockIndex)
 			blockMap[blockIndex.Hash] = blockIndex
 
-			nextBlockPosition += int64(blockIndex.Size)+8
-			_, err = file.Seek(nextBlockPosition,0)
+			nextBlockPosition += int64(blockIndex.Size) + 8
+			if nextBlockPosition >= fileInfo.Size() {
+				nextBlockPosition = fileInfo.Size()
+			}
+			_, err = file.Seek(nextBlockPosition, 0)
 
 			if err != nil {
 				break
 			}
 
-			blockCount++
+			blockHeight++
 
 		}
+		startPositionInFile = 0
 		elapsed := time.Since(start)
-		nanosPerBlock := elapsed.Nanoseconds()/int64(blockCount)
-		fmt.Printf("Traversing 1 block took: %s\n", time.Duration(nanosPerBlock) )
-		fmt.Printf("Traversing %d blocks took: %s\n", blockCount, elapsed)
-		fmt.Printf("Done: %d of %d bytes, %d blocks \n", nextBlockPosition, fileInfo.Size(), blockCount )
+		nanosPerBlock := elapsed.Nanoseconds() / int64(blockHeight-options.StartBlockHeight)
+		fmt.Printf("Traversing 1 block took: %s\n", time.Duration(nanosPerBlock))
+		fmt.Printf("Traversing %d blocks took: %s\n", blockHeight-options.StartBlockHeight, elapsed)
+		fmt.Printf("Done: %d of %d bytes, %d blocks \n", nextBlockPosition, fileInfo.Size(), blockHeight-options.StartBlockHeight)
 		fmt.Println("---")
 
 		file.Close()
 	}
 	elapsed := time.Since(start)
-	fmt.Printf("Traversing %d blocks took: %s\n", blockCount, elapsed )
+	fmt.Printf("Traversing %d blocks took: %s\n", blockHeight-options.StartBlockHeight, elapsed)
+	return blockMap, blockOrder, nil
+}
 
+func (bc *BitcoinBlockchainParser ) FindChains( blockMap map[[32]byte]*BlockInfo, blockOrder []*BlockInfo, options *BitcoinBlockchainParserOptions ) ([]*Chain, error) {
 	fmt.Println("\nlooking for chain")
 
 	// make first block found genesis block
 	// TODO remove
 
-	/*
-	for i:=0; i<32; i++  {
-		blockOrder[0].PrevHash[i]=0x00
-	}
-	*/
 
+	//for i:=0; i<32; i++  {
+	//	blockOrder[0].PrevHash[i]=0x00
+	//}
+	useGenesisBlock := true
+	for i:=0; i<32; i++ {
+		if options.StopAtHash[i] != 0x00  {
+			useGenesisBlock = false
+			break
+		}
+	}
+
+	if useGenesisBlock {
+		for i:=0; i< len(blockOrder); i++ {
+			if blockOrder[i].IsGenesis() {
+				copy( options.StopAtHash[0:32], blockOrder[i].Hash[0:32] )
+				break
+			}
+		}
+	}
 
 
 	chains := make( []*Chain,0 )
@@ -157,8 +195,8 @@ func (bc *BitcoinBlockchainParser ) FindChains() ([]*Chain, error) {
 			continue
 		}
 
-		count := 0
-		for !currentBlock.IsGenesis() {
+		count := 1 //including "genesis"
+		for !bytes.Equal( currentBlock.Hash[0:32], options.StopAtHash[0:32]) {
 			oldBlock := currentBlock
 			currentBlock = blockMap[currentBlock.PrevHash]
 			if currentBlock == nil {
@@ -167,21 +205,21 @@ func (bc *BitcoinBlockchainParser ) FindChains() ([]*Chain, error) {
 			if currentBlock.PartOfChain {
 				break
 			}
-			oldBlock.PrevBlock = currentBlock
+			oldBlock.PrevBlockInfo = currentBlock
 			count++
 		}
-		if currentBlock != nil && count > 0 {
+		if currentBlock != nil && count > 1 {
 
 			chain := new(Chain)
 			chain.Index = i
-			chain.Tip = blockOrder[i]
+			chain.Last = blockOrder[i]
 			chain.Length = count
 
-			bi := chain.Tip
+			bi := chain.Last
 			bi.PartOfChain = true
 
-			for !bi.IsGenesis() {
-				bi = bi.PrevBlock
+			for !bytes.Equal( bi.Hash[0:32], options.StopAtHash[0:32]) {
+				bi = bi.PrevBlockInfo
 				bi.PartOfChain = true
 			}
 
@@ -192,16 +230,12 @@ func (bc *BitcoinBlockchainParser ) FindChains() ([]*Chain, error) {
 
 	fmt.Printf("found %d possible chains\n", len(chains) )
 
-	if len(chains) == 0 {
-		return nil, errors.New("No chain found")
-	}
-
 	sort.Slice(chains, func(i, j int) bool {
 		return chains[i].Length > chains[j].Length
 	})
 
 	for i:=0; i< len(chains); i++ {
-		chains[i].walkBack()
+		chains[i].walkBack(options.StopAtHash)
 	}
 
 	return chains, nil
@@ -265,15 +299,20 @@ func (bc *BitcoinBlockchainParser) parseBlockInfo( file *os.File ) (*BlockInfo, 
 
 func (bc *BitcoinBlockchainParser ) ParseBlocks( options *BitcoinBlockchainParserOptions ) error {
 
-	chains, err := bc.FindChains()
+	blockMap, blockOrder, err := bc.CollectBlockInfo( options )
 	if err != nil {
-		fmt.Println(err)
+		return err
+	}
+
+	chains, err := bc.FindChains( blockMap, blockOrder, options )
+	if err != nil {
+		return err
 	}
 
 	// chains is sorted by length
 	longestChain := chains[0]
 
-	blockInfo := longestChain.Genesis
+	blockInfo := longestChain.Last
 
 	// blockInfo os now genesis: walk forward and parse blocks
 	var fileName string
@@ -353,7 +392,7 @@ func (bc *BitcoinBlockchainParser ) ParseBlocks( options *BitcoinBlockchainParse
 		}
 		blockCount++
 		// next one
-		blockInfo = blockInfo.NextBlock
+		blockInfo = blockInfo.NextBlockInfo
 	}
 
 	elapsed := time.Since(start)

@@ -9,9 +9,9 @@ type BlockInfo struct {
 	Hash [32]byte
 	Size uint32
 	// Header
-	PrevHash [32]byte
-	PrevBlock *BlockInfo
-	NextBlock *BlockInfo
+	PrevHash      [32]byte
+	PrevBlockInfo *BlockInfo
+	NextBlockInfo *BlockInfo
 
 	BlkFilePosition int32
 	BlkFileNumber uint16
@@ -42,12 +42,12 @@ func (b *BlockInfo) ToBytes() ([]byte, error) {
 
 	toSerialize := new( blockInfoSerialized )
 
-	if b.PrevBlock != nil {
-		toSerialize.PrevHash = b.PrevBlock.Hash
+	if b.PrevBlockInfo != nil {
+		toSerialize.PrevHash = b.PrevBlockInfo.Hash
 	}
 
-	if b.NextBlock != nil {
-		toSerialize.NextHash = b.NextBlock.Hash
+	if b.NextBlockInfo != nil {
+		toSerialize.NextHash = b.NextBlockInfo.Hash
 	}
 
 	toSerialize.BlkFileNumber = b.BlkFileNumber
@@ -73,12 +73,12 @@ func (b *BlockInfo) ToBytes() []byte {
 	infoBytes := make( []byte, 32+32+16+32 )
 	buffer := make( []byte, 32 )
 
-	if b.PrevBlock != nil {
-		copy( infoBytes[0:32], b.PrevBlock.Hash[0:32] )
+	if b.PrevBlockInfo != nil {
+		copy( infoBytes[0:32], b.PrevBlockInfo.Hash[0:32] )
 	}
 
-	if b.NextBlock != nil {
-		copy( infoBytes[32:64], b.NextBlock.Hash[0:32] )
+	if b.NextBlockInfo != nil {
+		copy( infoBytes[32:64], b.NextBlockInfo.Hash[0:32] )
 	}
 
 	buffer = buffer[0:16]
@@ -91,16 +91,11 @@ func (b *BlockInfo) ToBytes() []byte {
 	return infoBytes
 }
 
-func BlockInfoFromBytes( blockHash [32]byte, bytes []byte, blockInfoLookup map[[32]byte]*BlockInfo ) *BlockInfo  {
+func BlockInfoFromBytes( blockHash []byte, bytes []byte, blockInfoLookup map[[32]byte]*BlockInfo ) *BlockInfo  {
 	blockInfo := new( BlockInfo )
 
-	blockInfo.Hash = blockHash
-
-	var prevBlockHash [32]byte
-	copy( prevBlockHash[0:32], bytes[0:32] )
-
-	var nextBlockHash [32]byte
-	copy( nextBlockHash[0:32], bytes[32:64] )
+	copy( blockInfo.Hash[0:32], blockHash)
+	copy( blockInfo.PrevHash[0:32], bytes[0:32] )
 
 	buffer := make( []byte, 64 )
 
@@ -115,13 +110,20 @@ func BlockInfoFromBytes( blockHash [32]byte, bytes []byte, blockInfoLookup map[[
 	blockInfo.BlkFileNumber = blkFileNumber
 	blockInfo.BlkFilePosition = int32(blkFilePosition)
 
-	if bi, ok := blockInfoLookup[prevBlockHash]; ok {
-		blockInfo.PrevBlock = bi
+	if blockInfoLookup != nil {
+
+		if bi, ok := blockInfoLookup[blockInfo.PrevHash]; ok {
+			blockInfo.PrevBlockInfo = bi
+		}
+
+		var nextBlockHash [32]byte
+		copy( nextBlockHash[0:32], bytes[32:64] )
+
+		if bi, ok := blockInfoLookup[nextBlockHash]; ok {
+			blockInfo.NextBlockInfo = bi
+		}
 	}
 
-	if bi, ok := blockInfoLookup[nextBlockHash]; ok {
-		blockInfo.NextBlock = bi
-	}
 
 	return blockInfo
 }
@@ -140,7 +142,7 @@ func (b *BlockInfo) hasPrev() bool {
 }
 
 func (b *BlockInfo) hasNext() bool {
-	return b.NextBlock != nil
+	return b.NextBlockInfo != nil
 }
 
 func (b *BlockInfo) isPrevTo( block *Block ) bool {
