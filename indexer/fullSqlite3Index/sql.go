@@ -31,9 +31,9 @@ const SQLUpsertAddress = "INSERT INTO address(address,balance) VALUES(?,?) ON CO
 
 const SQLUpdateAddressBalance = "UPDATE address SET balance=balance+? WHERE id=?;"
 const SQLInsertInput = "INSERT INTO tx_input(tx_id,output_id) VALUES(?,?);"
-const SQLInsertOutput= "INSERT INTO tx_output(tx_id,idx,amount,address_id) VALUES(?,?,?,?);"
+const SQLInsertOutput = "INSERT INTO tx_output(tx_id,idx,amount,address_id) VALUES(?,?,?,?);"
 
-const SQLSelectOutput= "SELECT o.id, o.amount, o.address_id FROM tx LEFT JOIN tx_output o ON tx.id = o.tx_id LEFT JOIN address a on o.address_id = a.id WHERE txid=? AND o.idx=?"
+const SQLSelectOutput = "SELECT o.id, o.amount, o.address_id FROM tx LEFT JOIN tx_output o ON tx.id = o.tx_id LEFT JOIN address a on o.address_id = a.id WHERE txid=? AND o.idx=?"
 
 const SQLOnStart = `PRAGMA foreign_keys = OFF;
 

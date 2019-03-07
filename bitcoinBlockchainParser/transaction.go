@@ -27,48 +27,48 @@ package bitcoinBlockchainParser
 import "fmt"
 
 type Transaction struct {
-	TxId [32]byte
-	WtxId [32]byte
-	Version uint32
-	Witness bool
-	Size int
-	BaseSize int
-	VirtualSize int
-	Weight int
-	Amount uint64
-	Fee uint64
-	Inputs []TxInput
-	Outputs []TxOutput
-	WitnessItems []WitnessItem
-	Locktime uint32
+  TxId         [32]byte
+  WtxId        [32]byte
+  Version      uint32
+  Witness      bool
+  Size         int
+  BaseSize     int
+  VirtualSize  int
+  Weight       int
+  Amount       uint64
+  Fee          uint64
+  Inputs       []TxInput
+  Outputs      []TxOutput
+  WitnessItems []WitnessItem
+  Locktime     uint32
 }
 
 func (tx *Transaction) WtxIdString() string {
-	return fmt.Sprintf("%x", tx.WtxId )
+  return fmt.Sprintf("%x", tx.WtxId)
 }
 
 func (tx *Transaction) TxIdString() string {
-	return fmt.Sprintf("%x", tx.TxId )
+  return fmt.Sprintf("%x", tx.TxId)
 }
 
 type WitnessItem struct {
-	Data []byte
+  Data []byte
 
-	BlkFilePosition int
+  BlkFilePosition int
 }
 
 type TxInput struct {
-	SourceTxHash [32]byte
-	OutputIndex uint32
-	Script []byte
-	Sequence uint32
+  SourceTxHash [32]byte
+  OutputIndex  uint32
+  Script       []byte
+  Sequence     uint32
 }
 
 func (txi *TxInput) SourceTxHashString() string {
-	return fmt.Sprintf("%x", txi.SourceTxHash )
+  return fmt.Sprintf("%x", txi.SourceTxHash)
 }
 
 type TxOutput struct {
-	Value uint64
-	Script *Script
+  Value  uint64
+  Script *Script
 }

@@ -58,7 +58,6 @@ CREATE TABLE tx_address (
 CREATE UNIQUE INDEX address_address ON address (address);
 `
 
-
 const SQLOnEnd = `
 CREATE INDEX idx_address_tx_id ON tx_address (tx_id);
 CREATE INDEX idx_address_address_id ON tx_address (address_id);
