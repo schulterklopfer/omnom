@@ -51,7 +51,7 @@ type BitcoinBlockchainParserOptions struct {
   // private
   CallBlockInfoCallback bool
   CallBlockCallback     bool
-  StopAtHash            [32]byte
+  StopAtPrevHash        [32]byte
   BlkFilePosition       int32
   BlkFileNumber         uint16
   StartBlockHeight      uint64
@@ -181,30 +181,18 @@ func (bc *BitcoinBlockchainParser) CollectBlockInfo(options *BitcoinBlockchainPa
 func (bc *BitcoinBlockchainParser) FindChains(blockMap map[[32]byte]*BlockInfo, blockOrder []*BlockInfo, options *BitcoinBlockchainParserOptions) ([]*Chain, error) {
   fmt.Println("\nlooking for chain")
 
-  // make first block found genesis block
-  // TODO remove
-
-  //for i:=0; i<32; i++  {
-  //	blockOrder[0].PrevHash[i]=0x00
-  //}
-  useGenesisBlock := true
-  for i := 0; i < 32; i++ {
-    if options.StopAtHash[i] != 0x00 {
-      useGenesisBlock = false
-      break
-    }
-  }
-
-  if useGenesisBlock {
-    for i := 0; i < len(blockOrder); i++ {
-      if blockOrder[i].IsGenesis() {
-        copy(options.StopAtHash[0:32], blockOrder[i].Hash[0:32])
-        break
-      }
-    }
-  }
-
   chains := make([]*Chain, 0)
+  if len(blockOrder) == 1 {
+    // no new blocks
+    chain := new(Chain)
+    chain.Index = 0
+    chain.Last = blockOrder[0]
+    chain.First = blockOrder[0]
+    chain.Length = 1
+    blockOrder[0].PartOfChain = true
+    chains = append(chains, chain)
+    return chains,nil
+  }
 
   for i := len(blockOrder) - 1; i >= 0; i-- {
     currentBlock := blockOrder[i]
@@ -217,7 +205,7 @@ func (bc *BitcoinBlockchainParser) FindChains(blockMap map[[32]byte]*BlockInfo, 
     }
 
     count := 1 //including "genesis"
-    for !bytes.Equal(currentBlock.Hash[0:32], options.StopAtHash[0:32]) {
+    for !bytes.Equal(currentBlock.PrevHash[0:32], options.StopAtPrevHash[0:32]) {
       oldBlock := currentBlock
       currentBlock = blockMap[currentBlock.PrevHash]
       if currentBlock == nil {
@@ -239,7 +227,7 @@ func (bc *BitcoinBlockchainParser) FindChains(blockMap map[[32]byte]*BlockInfo, 
       bi := chain.Last
       bi.PartOfChain = true
 
-      for !bytes.Equal(bi.Hash[0:32], options.StopAtHash[0:32]) {
+      for !bytes.Equal(bi.PrevHash[0:32], options.StopAtPrevHash[0:32]) {
         bi = bi.PrevBlockInfo
         bi.PartOfChain = true
       }
@@ -256,7 +244,7 @@ func (bc *BitcoinBlockchainParser) FindChains(blockMap map[[32]byte]*BlockInfo, 
   })
 
   for i := 0; i < len(chains); i++ {
-    chains[i].walkBack(options.StopAtHash)
+    chains[i].walkBack(options.StopAtPrevHash)
   }
 
   return chains, nil
@@ -317,22 +305,16 @@ func (bc *BitcoinBlockchainParser) parseBlockInfo(file *os.File) (*BlockInfo, er
 
 }
 
-func (bc *BitcoinBlockchainParser) ParseBlocks(options *BitcoinBlockchainParserOptions) error {
+func (bc *BitcoinBlockchainParser) ParseBlocks( chain *Chain, options *BitcoinBlockchainParserOptions) error {
 
-  blockMap, blockOrder, err := bc.CollectBlockInfo(options)
-  if err != nil {
-    return err
+  if chain == nil {
+    return errors.New("No chain specified")
   }
 
-  chains, err := bc.FindChains(blockMap, blockOrder, options)
-  if err != nil {
-    return err
-  }
+  chain.walkBack( options.StopAtPrevHash )
 
-  // chains is sorted by length
-  longestChain := chains[0]
-
-  blockInfo := longestChain.Last
+  var err error
+  blockInfo := chain.First
 
   // blockInfo os now genesis: walk forward and parse blocks
   var fileName string
@@ -345,7 +327,7 @@ func (bc *BitcoinBlockchainParser) ParseBlocks(options *BitcoinBlockchainParserO
 
     if options.CallBlockInfoCallback {
       if bc.onBlock != nil {
-        err = bc.onBlockInfo(blockCount, longestChain.Length, blockInfo)
+        err := bc.onBlockInfo(blockCount, chain.Length, blockInfo)
         if err != nil {
           return err
         }
@@ -388,14 +370,14 @@ func (bc *BitcoinBlockchainParser) ParseBlocks(options *BitcoinBlockchainParserO
 
       if bc.onBlock != nil {
 
-        err = bc.onBlock(blockCount, longestChain.Length, block)
+        err = bc.onBlock(blockCount, chain.Length, block)
         if err != nil {
           return err
         }
       }
     }
 
-    if longestChain.Length-blockCount < 0 {
+    if chain.Length-blockCount < 0 {
       fmt.Println("Something is wrong")
     }
 
@@ -405,8 +387,8 @@ func (bc *BitcoinBlockchainParser) ParseBlocks(options *BitcoinBlockchainParserO
       fmt.Printf("Traversing %d blocks took: %s\n", blockCount, elapsed)
       fmt.Printf("Traversing 1 blockInfo took: %s\n", time.Duration(nanosPerBlock))
       fmt.Printf("Number of blocks visited: %d\n", blockCount)
-      fmt.Printf("Done: %3.2f percent\n", float64(blockCount)*100.0/float64(longestChain.Length))
-      fmt.Printf("ETA: %s\n", time.Duration(nanosPerBlock*int64(longestChain.Length-blockCount)))
+      fmt.Printf("Done: %3.2f percent\n", float64(blockCount)*100.0/float64(chain.Length))
+      fmt.Printf("ETA: %s\n", time.Duration(nanosPerBlock*int64(chain.Length-blockCount)))
       fmt.Println("---")
 
     }

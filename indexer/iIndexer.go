@@ -45,5 +45,6 @@ type Indexer interface {
   CheckBlockInfoEntries(*bitcoinBlockchainParser.Chain) error
   CleanupReorgCache(*bitcoinBlockchainParser.Chain) error
 
+  GetReorgCacheSize() int
   IndexSearch() IndexSearch
 }

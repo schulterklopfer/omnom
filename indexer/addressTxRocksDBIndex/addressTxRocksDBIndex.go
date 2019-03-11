@@ -408,3 +408,7 @@ func (indexer *AddressTxRocksDBIndex) CleanupReorgCache(longestChain *bitcoinBlo
   return nil
 
 }
+
+func (indexer *AddressTxRocksDBIndex) GetReorgCacheSize() int {
+  return indexer.reorgCacheSize
+}

@@ -33,9 +33,9 @@ type Chain struct {
   Length int
 }
 
-func (c *Chain) walkBack(stopAtHash [32]byte) {
+func (c *Chain) walkBack(stopAtPrevHash [32]byte) {
   block := c.Last
-  for !bytes.Equal(block.Hash[0:32], stopAtHash[0:32]) {
+  for !bytes.Equal(block.PrevHash[0:32], stopAtPrevHash[0:32]) {
     oldBlock := block
     block = block.PrevBlockInfo
     block.NextBlockInfo = oldBlock

@@ -64,24 +64,8 @@ func main() {
     // parse historic data
     log.Println("Starting to build index")
     opts := bitcoinBlockchainParser.NewBitcoinBlockchainParserDefaultOptions()
-    opts.CallBlockCallback = false
-    err = bp.ParseBlocks(opts)
-
-    if err != nil {
-      fmt.Println(err)
-    }
-  } else {
-    log.Println("Found index...")
-    log.Println("Checking index consistency...")
-
-    tipBlockInfo, err := idx.GetTipBlockInfo()
-
-    // walk back index blockInfo to genesis block
-    opts := bitcoinBlockchainParser.NewBitcoinBlockchainParserDefaultOptions()
-    opts.BlkFilePosition = tipBlockInfo.BlkFilePosition
-    opts.BlkFileNumber = tipBlockInfo.BlkFileNumber
-    opts.StopAtHash = tipBlockInfo.Hash
-    opts.StartBlockHeight = idx.GetBlockCount() - 1
+    //opts.CallBlockCallback = false
+    //opts.CallBlockInfoCallback = false
 
     // look for chains with current tip as root
     blockMap, blockOrder, err := bp.CollectBlockInfo(opts)
@@ -92,29 +76,85 @@ func main() {
 
     chains, err := bp.FindChains(blockMap, blockOrder, opts)
 
-    if err != nil && len(chains) == 0 {
-      // this means there is no data in the blk files
-      // leading back to the current tip in the index. -> Reorg
-      // we need to walk back the indexed chain and check for
-      // blocks connecting to a previous tip. If we find a chain
-      // linked to a previous tip, we need to remove all indexed
-      // data for the dangling chain and then update the reorg cache
+    if err == nil && len(chains) > 0 {
+      err = bp.ParseBlocks(chains[0], opts)
 
+      if err != nil {
+        fmt.Println(err)
+      }
+    }
+  } else {
+    log.Println("Found index...")
+    log.Println("Checking index consistency...")
+
+
+    for i:=0; i<idx.GetReorgCacheSize(); i++ {
+      tipBlockInfo, err := idx.GetTipBlockInfo()
+
+      // walk back index blockInfo to genesis block
+      opts := bitcoinBlockchainParser.NewBitcoinBlockchainParserDefaultOptions()
+      //opts.CallBlockCallback = false
+      //opts.CallBlockInfoCallback = false
+      opts.BlkFilePosition = tipBlockInfo.BlkFilePosition
+      opts.BlkFileNumber = tipBlockInfo.BlkFileNumber
+      opts.StopAtPrevHash = tipBlockInfo.PrevHash
+      opts.StartBlockHeight = idx.GetBlockCount() - 1
+
+      // look for chains with current tip as root
+      blockMap, blockOrder, err := bp.CollectBlockInfo(opts)
+      if err != nil {
+        log.Fatalf("Error in collecting block info: %s", err)
+        return
+      }
+
+      chains, err := bp.FindChains(blockMap, blockOrder, opts)
+
+      if err != nil && len(chains) == 0 {
+        // this means there is no data in the blk files
+        // leading back to the current tip in the index. -> Reorg
+        // we need to walk back the indexed chain and check for
+        // blocks connecting to a previous tip. If we find a chain
+        // linked to a previous tip, we need to remove all indexed
+        // data for the dangling chain and then update the reorg cache
+
+        // TODO: test in regtest
+        tipBlockInfo, err = idx.IndexSearch().FindBlockInfoByBlockHash( tipBlockInfo.PrevHash[0:32] )
+        if err != nil {
+          fmt.Println(err)
+        }
+      } else {
+        if chains[0].First == chains[0].Last {
+          // everything ok.
+          log.Println("No new blocks found" )
+        } else {
+          // also ok!
+          log.Printf("Last tip:    %x\n", tipBlockInfo.Hash)
+          log.Printf("Chain first: %x\n", chains[0].First.Hash)
+          log.Printf("Chain last:  %x\n", chains[0].Last.Hash)
+          log.Printf("Total len:   %d\n", int(chains[0].Length)+int(opts.StartBlockHeight))
+
+          // Start reading blocks from block files
+          err = bp.ParseBlocks(chains[0], opts)
+
+          if err != nil {
+            fmt.Println(err)
+          }
+
+        }
+        break
+      }
+
+
+      //longestChain := chains[0]
+
+      //err = idx.CleanupReorgCache( longestChain )
+
+      //if err != nil {
+      //	log.Fatalf( "Error in checking index consistency: %s", err )
+      //}
     }
 
-    log.Println(chains)
 
-    log.Printf("Last tip:    %x\n", tipBlockInfo.Hash)
-    log.Printf("Chain first: %x\n", chains[0].First.Hash)
-    log.Printf("Chain last:  %x\n", chains[0].Last.Hash)
-    log.Printf("Total len:   %d\n", int(chains[0].Length)+int(opts.StartBlockHeight))
-    //longestChain := chains[0]
-
-    //err = idx.CleanupReorgCache( longestChain )
-
-    //if err != nil {
-    //	log.Fatalf( "Error in checking index consistency: %s", err )
-    //}
   }
 
   idx.OnEnd()
