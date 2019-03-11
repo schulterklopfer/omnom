@@ -82,6 +82,13 @@ func main() {
       if err != nil {
         fmt.Println(err)
       }
+
+      err = idx.CleanupReorgCache(chains[0])
+
+      if err != nil {
+        fmt.Println(err)
+      }
+
     }
   } else {
     log.Println("Found index...")
@@ -140,18 +147,16 @@ func main() {
             fmt.Println(err)
           }
 
+          err = idx.CleanupReorgCache(chains[0])
+
+          if err != nil {
+            fmt.Println(err)
+          }
+
         }
         break
       }
-
-
-      //longestChain := chains[0]
-
-      //err = idx.CleanupReorgCache( longestChain )
-
-      //if err != nil {
-      //	log.Fatalf( "Error in checking index consistency: %s", err )
-      //}
+      
     }
 
 

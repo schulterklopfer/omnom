@@ -374,10 +374,10 @@ func (indexer *AddressTxRocksDBIndex) CleanupReorgCache(longestChain *bitcoinBlo
   if !bytes.Equal(longestChain.First.Hash[0:32], indexer.tipBlockHash[0:32]) {
     return errors.New("Chain tip mismatch")
   }
-  blockInfo := longestChain.First
+  blockInfo := longestChain.Last
   log.Println("Cleaning up reorg cache")
   counter := 0
-  for !blockInfo.IsGenesis() {
+  for blockInfo.PrevBlockInfo != nil {
     if counter > indexer.reorgCacheSize {
       // remove stuff here
       txids, err := indexer.indexSearch.FindTransactionIdsByBlockHash(blockInfo.Hash[0:32])
