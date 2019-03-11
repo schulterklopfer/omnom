@@ -35,7 +35,9 @@ it will also burn down your house
 /*
 zmqpubrawblock=tcp://0.0.0.0:18501
 zmqpubrawtx=tcp://0.0.0.0:18502
- */import (
+ */
+
+ import (
   "fmt"
   "github.com/btcsuite/btcd/chaincfg"
   "log"
@@ -111,7 +113,7 @@ func main() {
       blockMap, blockOrder, err := bp.CollectBlockInfo(opts)
       if err != nil {
         log.Fatalf("Error in collecting block info: %s", err)
-        return
+        break
       }
 
       chains, err := bp.FindChains(blockMap, blockOrder, opts)
@@ -152,14 +154,10 @@ func main() {
           if err != nil {
             fmt.Println(err)
           }
-
         }
         break
       }
-      
     }
-
-
   }
 
   idx.OnEnd()
